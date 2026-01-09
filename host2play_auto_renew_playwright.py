@@ -1,7 +1,14 @@
 """
 Host2Play 自动续期脚本 - Playwright + Camoufox + YOLO 版本
 - 使用 Playwright + Camoufox 过 Cloudflare（参考 katabump）
-- 使用 YOLO 模型自动识别 reCAPTCHA 图形验证（参考 local 版本）
+- 使用 YOLO 模型自动识别 reCAPTCHA 图形验证（基于 Breaking-reCAPTCHAv2 项目改进）
+
+主要改进（参考 https://github.com/aplesner/Breaking-reCAPTCHAv2）：
+1. 改进的重试循环：使用双层循环，外层控制总尝试次数，内层持续寻找支持的验证码类型
+2. 更好的图片变化检测：改进动态验证中的新图片检测逻辑，使用重试机制等待图片加载
+3. 更健壮的错误处理：在每个关键步骤都检查验证状态，及时返回成功
+4. 优化的延迟策略：使用更符合人类行为的随机延迟
+5. 帧重新获取：处理可能的帧分离问题，每次操作前重新获取 frame 引用
 """
 import asyncio
 import logging
@@ -307,8 +314,8 @@ async def find_and_click_turnstile(page: Page, retries: int = 20) -> bool:
     return False
 
 
-async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 8) -> bool:
-    """使用 YOLO 模型处理 reCAPTCHA 图形验证"""
+async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
+    """使用 YOLO 模型处理 reCAPTCHA 图形验证 - 基于 Breaking-reCAPTCHAv2 项目改进"""
     logger.info("🔍 检查 reCAPTCHA...")
     
     # 检查 YOLO 是否可用
@@ -370,157 +377,258 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 8) -> bool:
         
         logger.info("✓ 开始识别验证码...")
         
-        # 步骤 3: 开始 YOLO 识别循环
-        for attempt in range(max_attempts):
-            logger.info(f"\n  尝试 {attempt + 1}/{max_attempts}...")
+        # 步骤 3: 持续尝试直到验证成功（参考 Breaking-reCAPTCHAv2）
+        outer_attempt = 0
+        while outer_attempt < max_attempts:
+            outer_attempt += 1
+            logger.info(f"\n=== 外层尝试 {outer_attempt}/{max_attempts} ===")
             
             try:
-                # 等待验证码加载
-                await asyncio.sleep(2)
-                
-                # 获取目标文本
-                try:
-                    target_element = await challenge_frame.wait_for_selector('#rc-imageselect strong', timeout=10000)
-                    target_text = await target_element.text_content()
-                    target_num = get_target_num_from_text(target_text)
-                    logger.info(f"  目标类型: {target_text} (编号: {target_num})")
-                except Exception as e:
-                    logger.warning(f"  获取目标类型失败: {e}")
-                    # 点击重载按钮
-                    reload_btn = await challenge_frame.query_selector('#recaptcha-reload-button')
-                    if reload_btn:
-                        await reload_btn.click()
-                        await asyncio.sleep(2)
-                    continue
-                
-                if target_num == 1000:
-                    logger.info("  跳过不支持的类型...")
-                    reload_btn = await challenge_frame.query_selector('#recaptcha-reload-button')
-                    if reload_btn:
-                        await reload_btn.click()
-                        await asyncio.sleep(2)
-                    continue
-                
-                # 检查验证码类型
-                title_element = await challenge_frame.query_selector('#rc-imageselect')
-                title_text = await title_element.text_content() if title_element else ""
-                
-                # 获取图片 URL
-                img_elements = await challenge_frame.query_selector_all('#rc-imageselect-target img')
+                # 内层循环: 寻找合适的验证码类型
+                captcha_type = None
+                answers = []
                 img_urls = []
-                for img in img_elements:
-                    url = await img.get_attribute('src')
-                    if url:
-                        img_urls.append(url)
+                target_num = 1000
                 
-                if not img_urls:
-                    logger.warning("  未找到验证码图片")
+                # 持续重载直到找到支持的类型
+                reload_count = 0
+                max_reload = 15
+                
+                while reload_count < max_reload:
+                    reload_count += 1
+                    
+                    # 等待验证码加载
+                    await asyncio.sleep(1.5)
+                    
+                    # 检查是否已通过验证
+                    checkbox_frame_check = None
+                    for frame in page.frames:
+                        if "recaptcha" in frame.url and "anchor" in frame.url:
+                            checkbox_frame_check = frame
+                            break
+                    
+                    if checkbox_frame_check:
+                        try:
+                            checked = await checkbox_frame_check.query_selector('span[aria-checked="true"]', timeout=1000)
+                            if checked:
+                                logger.info("✓✓✓ reCAPTCHA 已自动通过！")
+                                return True
+                        except:
+                            pass
+                    
+                    # 重新获取挑战框（可能已分离）
+                    challenge_frame = None
+                    for frame in page.frames:
+                        if "recaptcha" in frame.url and "bframe" in frame.url:
+                            challenge_frame = frame
+                            break
+                    
+                    if not challenge_frame:
+                        logger.info("✓✓✓ reCAPTCHA 验证成功（挑战框已消失）！")
+                        return True
+                    
+                    # 获取目标类型
+                    try:
+                        target_element = await challenge_frame.wait_for_selector('#rc-imageselect strong', timeout=5000)
+                        target_text = await target_element.text_content()
+                        target_num = get_target_num_from_text(target_text)
+                        
+                        if VERBOSE:
+                            logger.info(f"  [{reload_count}/{max_reload}] 目标: {target_text} (编号: {target_num})")
+                    except Exception as e:
+                        logger.warning(f"  获取目标类型失败: {e}")
+                        reload_btn = await challenge_frame.query_selector('#recaptcha-reload-button')
+                        if reload_btn:
+                            await reload_btn.click()
+                            await asyncio.sleep(1)
+                        continue
+                    
+                    # 如果是不支持的类型，重新加载
+                    if target_num == 1000:
+                        if VERBOSE:
+                            logger.info("  跳过不支持的类型，重新加载...")
+                        reload_btn = await challenge_frame.query_selector('#recaptcha-reload-button')
+                        if reload_btn:
+                            random_delay(mu=0.3, sigma=0.1)
+                            await reload_btn.click()
+                        continue
+                    
+                    # 检查验证码类型
+                    title_element = await challenge_frame.query_selector('#rc-imageselect')
+                    title_text = await title_element.text_content() if title_element else ""
+                    
+                    # 获取图片 URL
+                    img_elements = await challenge_frame.query_selector_all('#rc-imageselect-target img')
+                    img_urls = []
+                    for img in img_elements:
+                        url = await img.get_attribute('src')
+                        if url:
+                            img_urls.append(url)
+                    
+                    if not img_urls:
+                        logger.warning("  未找到验证码图片")
+                        continue
+                    
+                    # 下载第一张图片（3x3）或所有图片（4x4）
+                    if "squares" in title_text.lower():
+                        # 4x4: 只下载第一张完整图片
+                        if not download_img(0, img_urls[0]):
+                            continue
+                        logger.info("  检测到 4x4 方格验证")
+                        answers = square_solver(target_num, VERBOSE, model)
+                        captcha_type = "squares"
+                    else:
+                        # 3x3: 下载第一张图片
+                        if not download_img(0, img_urls[0]):
+                            continue
+                        
+                        if "none" in title_text.lower():
+                            logger.info("  检测到 3x3 动态验证")
+                            captcha_type = "dynamic"
+                        else:
+                            logger.info("  检测到 3x3 选择验证")
+                            captcha_type = "selection"
+                        
+                        answers = dynamic_and_selection_solver(target_num, VERBOSE, model)
+                    
+                    # 检查识别结果
+                    if captcha_type == "squares":
+                        if len(answers) >= 1 and len(answers) < 16:
+                            logger.info(f"  ✓ 识别成功，答案: {answers}")
+                            break
+                        else:
+                            logger.warning(f"  ✗ 4x4 识别结果异常: {len(answers)} 个")
+                            reload_btn = await challenge_frame.query_selector('#recaptcha-reload-button')
+                            if reload_btn:
+                                await reload_btn.click()
+                    else:
+                        if len(answers) > 2:
+                            logger.info(f"  ✓ 识别成功，答案: {answers}")
+                            break
+                        else:
+                            logger.warning(f"  ✗ 3x3 识别结果不足: {len(answers)} 个")
+                            reload_btn = await challenge_frame.query_selector('#recaptcha-reload-button')
+                            if reload_btn:
+                                await reload_btn.click()
+                    
+                    # 等待重载
+                    await challenge_frame.wait_for_selector('#rc-imageselect-target td', timeout=5000)
+                
+                # 如果重载次数过多，跳出
+                if reload_count >= max_reload:
+                    logger.warning(f"  重载次数过多 ({max_reload})，跳过本次尝试")
                     continue
                 
-                # 下载第一张图片
-                if not download_img(0, img_urls[0]):
-                    continue
-                
-                # 根据类型识别
-                if "squares" in title_text.lower():
-                    logger.info("  检测到 4x4 方格验证...")
-                    answers = square_solver(target_num, VERBOSE, model)
-                    captcha_type = "squares"
-                elif "none" in title_text.lower():
-                    logger.info("  检测到 3x3 动态验证...")
-                    answers = dynamic_and_selection_solver(target_num, VERBOSE, model)
-                    captcha_type = "dynamic"
-                else:
-                    logger.info("  检测到 3x3 一次性选择验证...")
-                    answers = dynamic_and_selection_solver(target_num, VERBOSE, model)
-                    captcha_type = "selection"
-                
-                if len(answers) < 1:
-                    logger.warning("    未检测到目标，重新加载...")
-                    reload_btn = await challenge_frame.query_selector('#recaptcha-reload-button')
-                    if reload_btn:
-                        await reload_btn.click()
-                        await asyncio.sleep(2)
-                    continue
-                
-                logger.info(f"  ✓ 识别到的答案位置: {answers}")
-                
-                # 点击答案
-                cells = await challenge_frame.query_selector_all('#rc-imageselect-target td')
-                for answer in answers:
-                    if answer <= len(cells):
-                        await cells[answer - 1].click()
-                        random_delay(mu=0.6, sigma=0.3)
-                
-                # 处理动态验证
+                # 开始点击答案
                 if captcha_type == "dynamic":
+                    # 动态验证：点击并等待新图片
+                    logger.info("  开始动态验证流程...")
+                    
+                    cells = await challenge_frame.query_selector_all('#rc-imageselect-target td')
+                    for answer in answers:
+                        if answer <= len(cells):
+                            await cells[answer - 1].click()
+                            random_delay(mu=0.5, sigma=0.2)
+                    
+                    # 持续处理新图片
                     dynamic_rounds = 0
-                    max_dynamic_rounds = 10
+                    max_dynamic_rounds = 15
                     
                     while dynamic_rounds < max_dynamic_rounds:
                         dynamic_rounds += 1
-                        logger.info(f"    动态验证轮次 {dynamic_rounds}/{max_dynamic_rounds}")
                         
-                        await asyncio.sleep(2)
+                        # 等待新图片加载
+                        before_img_urls = img_urls
                         
-                        # 获取新图片
-                        new_img_urls = []
-                        img_elements = await challenge_frame.query_selector_all('#rc-imageselect-target img')
-                        for img in img_elements:
-                            url = await img.get_attribute('src')
-                            if url:
-                                new_img_urls.append(url)
+                        # 检测新图片
+                        is_new = False
+                        retry_detect = 0
+                        while retry_detect < 20 and not is_new:
+                            retry_detect += 1
+                            await asyncio.sleep(0.3)
+                            
+                            new_img_urls = []
+                            img_elements = await challenge_frame.query_selector_all('#rc-imageselect-target img')
+                            for img in img_elements:
+                                url = await img.get_attribute('src')
+                                if url:
+                                    new_img_urls.append(url)
+                            
+                            # 检查是否有新图片
+                            index_common = []
+                            for answer in answers:
+                                if answer <= len(new_img_urls) and answer <= len(before_img_urls):
+                                    if new_img_urls[answer-1] == before_img_urls[answer-1]:
+                                        index_common.append(answer)
+                            
+                            if len(index_common) < 1:
+                                is_new = True
+                                img_urls = new_img_urls
                         
-                        # 检查是否有新图片
-                        has_new = False
-                        for answer in answers:
-                            if answer <= len(new_img_urls) and new_img_urls[answer-1] != img_urls[answer-1]:
-                                has_new = True
-                                break
-                        
-                        if not has_new:
-                            logger.info("    没有新图片，结束动态验证")
+                        if not is_new:
+                            logger.info(f"    [轮次 {dynamic_rounds}] 没有新图片，结束动态验证")
                             break
                         
-                        # 下载新图片并更新
+                        # 下载新图片
                         for answer in answers:
-                            if answer <= len(new_img_urls):
-                                download_img(answer, new_img_urls[answer-1])
+                            if answer <= len(img_urls):
+                                download_img(answer, img_urls[answer-1])
                         
                         # 更新主图片
-                        for answer in answers:
-                            try:
+                        try:
+                            for answer in answers:
                                 main_img = Image.open("0.png")
                                 new_img = Image.open(f"{answer}.png")
                                 paste_new_img_on_main_img(main_img, new_img, answer)
-                            except:
-                                break
+                        except Exception as e:
+                            logger.warning(f"    更新图片失败: {e}")
+                            # 重新获取所有图片
+                            await asyncio.sleep(0.5)
+                            img_elements = await challenge_frame.query_selector_all('#rc-imageselect-target img')
+                            new_img_urls = []
+                            for img in img_elements:
+                                url = await img.get_attribute('src')
+                                if url:
+                                    new_img_urls.append(url)
+                            for answer in answers:
+                                if answer <= len(new_img_urls):
+                                    download_img(answer, new_img_urls[answer-1])
+                            for answer in answers:
+                                main_img = Image.open("0.png")
+                                new_img = Image.open(f"{answer}.png")
+                                paste_new_img_on_main_img(main_img, new_img, answer)
                         
                         # 重新识别
                         answers = dynamic_and_selection_solver(target_num, VERBOSE, model)
                         
                         if len(answers) >= 1:
-                            logger.info(f"    新一轮检测到 {len(answers)} 个目标")
+                            logger.info(f"    [轮次 {dynamic_rounds}] 检测到 {len(answers)} 个新目标")
                             cells = await challenge_frame.query_selector_all('#rc-imageselect-target td')
                             for answer in answers:
                                 if answer <= len(cells):
                                     await cells[answer - 1].click()
-                                    random_delay(mu=0.6, sigma=0.3)
+                                    random_delay(mu=0.5, sigma=0.1)
                         else:
-                            logger.info("    未识别到更多目标，结束动态验证")
+                            logger.info(f"    [轮次 {dynamic_rounds}] 未识别到更多目标，结束")
                             break
-                        
-                        img_urls = new_img_urls
+                
+                elif captcha_type == "selection" or captcha_type == "squares":
+                    # 一次性选择：直接点击所有答案
+                    logger.info(f"  开始 {captcha_type} 验证流程...")
+                    cells = await challenge_frame.query_selector_all('#rc-imageselect-target td')
+                    for answer in answers:
+                        if answer <= len(cells):
+                            await cells[answer - 1].click()
+                            random_delay(mu=0.3, sigma=0.1)
                 
                 # 点击验证按钮
-                await asyncio.sleep(random.uniform(1.5, 2.5))
                 verify_btn = await challenge_frame.query_selector('#recaptcha-verify-button')
                 if verify_btn:
-                    await asyncio.sleep(random.uniform(0.8, 1.5))
+                    random_delay(mu=2, sigma=0.2)
                     await verify_btn.click()
                 
                 # 等待验证结果
-                await asyncio.sleep(random.uniform(3, 4))
+                await asyncio.sleep(4)
                 
                 # 检查是否通过
                 checkbox_frame = None
@@ -531,7 +639,7 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 8) -> bool:
                 
                 if checkbox_frame:
                     try:
-                        checked = await checkbox_frame.query_selector('span[aria-checked="true"]')
+                        checked = await checkbox_frame.query_selector('span[aria-checked="true"]', timeout=2000)
                         if checked:
                             logger.info("✓✓✓ reCAPTCHA 验证成功！")
                             return True
@@ -549,11 +657,14 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 8) -> bool:
                     logger.info("✓✓✓ reCAPTCHA 验证成功（挑战框已消失）！")
                     return True
                 
-                logger.info("  验证未通过，重试...")
+                logger.info("  验证未通过，进入下一轮尝试...")
                 
             except Exception as e:
                 logger.error(f"  本轮尝试失败: {e}")
-                if attempt >= max_attempts - 1:
+                import traceback
+                traceback.print_exc()
+                
+                if outer_attempt >= max_attempts:
                     return False
         
         logger.warning(f"✗ 达到最大尝试次数 ({max_attempts})，验证失败")
