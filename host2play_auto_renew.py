@@ -835,17 +835,49 @@ def renew_host2play_server():
                     print("\n✗ 无法找到或点击 Renew 按钮")
                     print(f"  详细信息: {result}")
                     
-                    # 保存页面源码以便调试
-                    if VERBOSE or CI:
-                        try:
-                            with open("debug_renew_button_page_source.html", "w", encoding="utf-8") as f:
-                                f.write(driver.page_source)
-                            print("  已保存页面源码: debug_renew_button_page_source.html")
-                        except:
-                            pass
+                    # 保存页面源码和截图以便调试
+                    try:
+                        with open("debug_renew_button_page_source.html", "w", encoding="utf-8") as f:
+                            f.write(driver.page_source)
+                        print("  已保存页面源码: debug_renew_button_page_source.html")
+                    except Exception as save_err:
+                        print(f"  保存页面源码失败: {save_err}")
                     
-                    print("  脚本将退出，请检查续期 URL 是否正确或页面是否需要登录")
-                    raise Exception("无法找到 Renew 按钮")
+                    # 保存当前页面截图
+                    try:
+                        driver.save_screenshot("debug_no_renew_button.png")
+                        print("  已保存截图: debug_no_renew_button.png")
+                    except Exception as screenshot_err:
+                        print(f"  保存截图失败: {screenshot_err}")
+                    
+                    # 检查页面是否需要登录
+                    page_text = driver.page_source.lower()
+                    if 'login' in page_text or 'sign in' in page_text or 'sign-in' in page_text:
+                        error_detail = "页面包含登录相关内容，可能需要先登录"
+                    elif 'expired' in page_text or 'session' in page_text:
+                        error_detail = "会话可能已过期，请检查 RENEW_URL 是否有效"
+                    else:
+                        error_detail = "页面上未找到 Renew 按钮，请检查 URL 是否正确"
+                    
+                    print(f"  提示: {error_detail}")
+                    
+                    # 发送详细的失败通知
+                    if ENABLE_TELEGRAM:
+                        from datetime import datetime
+                        error_msg = (
+                            "❌ <b>Host2Play 续期失败！</b>\n\n"
+                            f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                            f"🔗 URL: {RENEW_URL[:50]}...\n"
+                            f"❗ 错误: 无法找到 Renew 按钮\n"
+                            f"💡 提示: {error_detail}"
+                        )
+                        send_telegram_message(error_msg)
+                        
+                        # 如果有截图，发送截图
+                        if os.path.exists("debug_no_renew_button.png"):
+                            send_telegram_photo("debug_no_renew_button.png", "❌ 无法找到 Renew 按钮时的页面截图")
+                    
+                    raise Exception(f"无法找到 Renew 按钮: {error_detail}")
                 else:
                     print("✓ JavaScript 成功点击按钮")
             else:
@@ -1171,16 +1203,39 @@ def renew_host2play_server():
         except:
             print("⚠ 无法检查续期结果，请手动确认")
         
-        # 如果没有成功，发送失败通知
-        if not success and ENABLE_TELEGRAM:
-            from datetime import datetime
-            failure_msg = (
-                "⚠️ <b>Host2Play 续期状态未知</b>\n\n"
-                f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"🔗 URL: {RENEW_URL[:50]}...\n\n"
-                "请手动检查续期结果"
-            )
-            send_telegram_message(failure_msg)
+        # 如果没有成功，发送失败通知并保存诊断信息
+        if not success:
+            # 保存未成功时的页面截图和源码
+            try:
+                driver.save_screenshot("host2play_renew_unknown.png")
+                print(f"✓ 已保存状态未知截图: host2play_renew_unknown.png")
+            except:
+                pass
+            
+            try:
+                with open("host2play_renew_unknown.html", "w", encoding="utf-8") as f:
+                    f.write(driver.page_source)
+                print(f"✓ 已保存状态未知页面源码: host2play_renew_unknown.html")
+            except:
+                pass
+            
+            if ENABLE_TELEGRAM:
+                from datetime import datetime
+                failure_msg = (
+                    "⚠️ <b>Host2Play 续期状态未知</b>\n\n"
+                    f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    f"🔗 URL: {RENEW_URL[:50]}...\n\n"
+                    "请手动检查续期结果"
+                )
+                send_telegram_message(failure_msg)
+                
+                # 发送状态未知的截图
+                if os.path.exists("host2play_renew_unknown.png"):
+                    send_telegram_photo("host2play_renew_unknown.png", "⚠️ 续期状态未知时的页面截图")
+            
+            # 在 CI 环境中，如果没有成功也设置退出码为1
+            if CI:
+                print("⚠ CI 环境: 续期状态未知，设置退出码为1")
         
         print("\n浏览器将保持打开 10 秒...")
         sleep(10)
@@ -1189,6 +1244,20 @@ def renew_host2play_server():
         print(f"\n✗ 续期失败: {e}")
         import traceback
         traceback.print_exc()
+        
+        # 保存失败时的截图和页面源码以便调试
+        try:
+            driver.save_screenshot("host2play_renew_failed.png")
+            print(f"✓ 已保存失败截图: host2play_renew_failed.png")
+        except Exception as screenshot_err:
+            print(f"⚠ 保存失败截图失败: {screenshot_err}")
+        
+        try:
+            with open("host2play_renew_failed.html", "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+            print(f"✓ 已保存失败页面源码: host2play_renew_failed.html")
+        except Exception as html_err:
+            print(f"⚠ 保存失败页面源码失败: {html_err}")
         
         # 发送失败通知
         if ENABLE_TELEGRAM:
@@ -1200,6 +1269,14 @@ def renew_host2play_server():
                 f"❗ 错误: {str(e)[:100]}"
             )
             send_telegram_message(error_msg)
+            
+            # 发送失败截图
+            if os.path.exists("host2play_renew_failed.png"):
+                send_telegram_photo("host2play_renew_failed.png", "❌ 续期失败时的页面截图")
+        
+        # 在 CI 环境中，设置退出码为1以便 GitHub Actions 标记为失败
+        if CI:
+            sys.exit(1)
     finally:
         print("\n关闭浏览器...")
         driver.quit()
@@ -1218,3 +1295,5 @@ if __name__ == "__main__":
         print("\n✓ 脚本执行完成")
     except Exception as e:
         print(f"\n✗ 脚本执行失败: {e}")
+        if CI:
+            sys.exit(1)
