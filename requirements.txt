@@ -4,6 +4,7 @@
 selenium>=4.12.0
 selenium-wire>=5.1.0
 undetected-chromedriver>=3.5.0
+blinker==1.7.0
 
 # reCAPTCHA IA Solver 依赖
 ultralytics>=8.0.188
