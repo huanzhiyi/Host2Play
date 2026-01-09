@@ -30,13 +30,19 @@ jobs:
             chromium-chromedriver \
             libglib2.0-0 \
             libnss3 \
-            libgconf-2-4 \
-            libfontconfig1
+            libgbm1 \
+            libxss1 \
+            libasound2 \
+            libfontconfig1 \
+            libx11-xcb1 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxrandr2
       
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install selenium selenium-wire ultralytics opencv-python-headless pillow numpy requests
+          pip install -r requirements.txt
       
       - name: Check reCAPTCHA model
         run: |
