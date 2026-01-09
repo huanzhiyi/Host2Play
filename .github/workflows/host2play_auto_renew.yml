@@ -11,6 +11,21 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      - name: Free Disk Space
+        run: |
+          echo "清理前磁盘空间:"
+          df -h
+          
+          echo "删除不必要的文件..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          
+          echo "清理后磁盘空间:"
+          df -h
+      
       - name: Checkout repository
         uses: actions/checkout@v4
       
@@ -18,20 +33,46 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'requirements_playwright.txt'
       
-      - name: Install system dependencies
+      - name: Install system dependencies (minimal)
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget gnupg
+          sudo apt-get install -y wget
+      
+      - name: Cache Playwright browsers
+        uses: actions/cache@v3
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium
       
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements_playwright.txt
+          # 分步安装以节省空间
+          pip install playwright camoufox browserforge requests --no-cache-dir
+          pip install ultralytics opencv-python-headless pillow numpy onnxruntime --no-cache-dir
       
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
-          playwright install chromium
+          playwright install chromium --with-deps
+      
+      - name: Install Playwright dependencies only
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: |
+          playwright install-deps chromium
+      
+      - name: Check YOLO model
+        run: |
+          if [ ! -f model.onnx ]; then
+            echo "⚠️ model.onnx 文件不存在，尝试下载..."
+            curl -L -o model.onnx https://github.com/daijro/RecaptchaV2-IA-Solver/raw/main/model.onnx || echo "❌ 模型下载失败，将跳过 YOLO 识别"
+          else
+            echo "✅ model.onnx 文件已存在"
+          fi
       
       - name: Run auto renew script
         env:
@@ -40,7 +81,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CI: 'true'
         run: |
-          python host2play_auto_renew_playwright.py
+          python host2play_auto_renew.py
       
       - name: Upload success screenshot
         if: success()
@@ -61,3 +102,13 @@ jobs:
             host2play_*.png
           retention-days: 7
           if-no-files-found: ignore
+      
+      - name: 清理工作流记录
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
