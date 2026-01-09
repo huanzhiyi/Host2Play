@@ -1,4 +1,4 @@
-name: Host2Play Auto Renew
+name: Host2Play Auto Renew (Playwright)
 
 on:
   schedule:
@@ -11,88 +11,53 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Free up disk space
-        run: |
-          echo "清理前的磁盘空间："
-          df -h
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
-          sudo apt-get clean
-          echo "清理后的磁盘空间："
-          df -h
-      
       - name: Checkout repository
         uses: actions/checkout@v4
       
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-          cache: 'pip'
+          python-version: '3.11'
       
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            wget \
-            unzip \
-            chromium-browser \
-            chromium-chromedriver
+          sudo apt-get install -y wget gnupg
       
       - name: Install Python dependencies
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install -r requirements_playwright.txt
       
-      - name: Check reCAPTCHA model
+      - name: Install Playwright browsers
         run: |
-          if [ ! -f "model.onnx" ]; then
-            echo "❌ 错误: model.onnx 文件不存在"
-            echo "请确保模型文件已提交到仓库根目录"
-            exit 1
-          else
-            echo "✓ 找到模型文件: model.onnx"
-            ls -lh model.onnx
-          fi
+          playwright install chromium
       
       - name: Run auto renew script
         env:
           RENEW_URL: ${{ secrets.RENEW_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          HEADLESS: 'true'
-          VERBOSE: 'true'
           CI: 'true'
         run: |
-          python host2play_auto_renew.py
+          python host2play_auto_renew_playwright.py
       
-      - name: Upload screenshot on success
+      - name: Upload success screenshot
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: renew-screenshot-${{ github.run_number }}
+          name: renew-success-${{ github.run_number }}
           path: host2play_renew_success.png
           retention-days: 7
+          if-no-files-found: ignore
       
-      - name: Upload logs on failure
+      - name: Upload error screenshot
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: renew-logs-${{ github.run_number }}
+          name: renew-error-${{ github.run_number }}
           path: |
-            *.log
-            *.png
-            *.html
+            host2play_error*.png
+            host2play_*.png
           retention-days: 7
-      
-      - name: Check result
-        if: always()
-        run: |
-          if [ -f "host2play_renew_success.png" ]; then
-            echo "✅ 续期成功！"
-          else
-            echo "❌ 续期失败或未完成"
-          fi
+          if-no-files-found: ignore
