@@ -1,16 +1,16 @@
-# Host2Play 自动续期依赖 - Playwright 版本
-playwright>=1.40.0
-camoufox[playwright]>=0.4.0
-browserforge>=1.3.0
-requests>=2.31.0
-onnxruntime>=1.16.0
-opencv-python-headless>=4.5.0
-pillow>=9.0.0
-numpy>=1.21.0
+# Host2Play 自动续期脚本依赖 (host2play_auto_renew.py)
 
-# 旧版 Selenium 依赖（保留兼容性）
+# Selenium 浏览器自动化
 selenium>=4.12.0
 selenium-wire>=5.1.0
 undetected-chromedriver>=3.5.0
-blinker==1.7.0
+
+# reCAPTCHA IA Solver 依赖
 ultralytics>=8.0.188
+opencv-python-headless>=4.5.0
+pillow>=9.0.0
+numpy>=1.21.0
+onnxruntime>=1.16.0
+
+# HTTP 请求（Telegram 通知）
+requests>=2.31.0
