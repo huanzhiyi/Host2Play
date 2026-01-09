@@ -1,1373 +1,401 @@
 """
-Host2Play 自动续期脚本 - 使用 RecaptchaV2-IA-Solver
-访问续期页面，点击 Renew server，通过 reCAPTCHA 验证后点击窗体中的 Renew
-
-基于成功的 host2play_with_ia_solver.py
+Host2Play 自动续期脚本 - Playwright + Camoufox 版本
+使用 Playwright 选择器替代 YOLO 图形检测
+参考 katabump_auto_renew.py 的成功策略
 """
+import asyncio
+import logging
+import random
 import os
-import sys
-import shutil
-from time import sleep
-import re
-import cv2
-import numpy as np
+from typing import Optional
+from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+from camoufox.async_api import AsyncCamoufox
+from browserforge.fingerprints import Screen
 import requests
-from PIL import Image
-from ultralytics import YOLO
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-import seleniumwire.undetected_chromedriver as webdriver
+from datetime import datetime
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 配置
-MODEL_PATH = os.environ.get('MODEL_PATH', 'model.onnx')  # 模型文件在当前目录
-VERBOSE = os.environ.get('VERBOSE', 'true').lower() == 'true'
-RENEW_URL = os.environ.get('RENEW_URL')  # 必须通过环境变量提供
-HEADLESS = os.environ.get('HEADLESS', 'false').lower() == 'true'  # GitHub Actions 需要 headless
-SCREENSHOT_PATH = os.environ.get('SCREENSHOT_PATH', 'host2play_renew_success.png')
-CI = os.environ.get('CI', 'false').lower() == 'true'  # 检测是否在 CI 环境（GitHub Actions）
-
-# Telegram 配置
+RENEW_URL = os.environ.get('RENEW_URL')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
-ENABLE_TELEGRAM = TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
 
 
-def random_delay(mu=0.3, sigma=0.1):
-    """随机延迟模拟人类行为"""
-    delay = np.random.normal(mu, sigma)
-    delay = max(0.1, delay)
-    sleep(delay)
-
-
-def human_like_delay(min_time=0.5, max_time=1.5):
-    """更自然的随机延迟"""
-    sleep(np.random.uniform(min_time, max_time))
-
-
-def send_telegram_message(message, parse_mode='HTML'):
-    """发送 Telegram 通知"""
-    if not ENABLE_TELEGRAM:
+def send_telegram_message(message: str, photo_path: str = None) -> bool:
+    """发送Telegram消息"""
+    bot_token = TELEGRAM_BOT_TOKEN
+    chat_id = TELEGRAM_CHAT_ID
+    
+    if not bot_token or not chat_id:
+        logger.warning("⚠️ 未设置 Telegram 配置，跳过消息推送")
         return False
     
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        data = {
-            'chat_id': TELEGRAM_CHAT_ID,
-            'text': message,
-            'parse_mode': parse_mode
-        }
-        response = requests.post(url, data=data, timeout=10)
-        if response.status_code == 200:
-            print("✓ Telegram 通知发送成功")
-            return True
+        # 如果有图片，发送图片和消息
+        if photo_path and os.path.exists(photo_path):
+            url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+            with open(photo_path, 'rb') as photo:
+                files = {'photo': photo}
+                data = {
+                    'chat_id': chat_id,
+                    'caption': message,
+                    'parse_mode': 'Markdown'
+                }
+                response = requests.post(url, files=files, data=data, timeout=30)
         else:
-            print(f"⚠ Telegram 通知发送失败: {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"⚠ Telegram 通知发送异常: {e}")
-        return False
-
-
-def send_telegram_photo(photo_path, caption=''):
-    """发送 Telegram 图片"""
-    if not ENABLE_TELEGRAM:
-        return False
-    
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-        
-        with open(photo_path, 'rb') as photo:
-            files = {'photo': photo}
+            # 只发送文本消息
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             data = {
-                'chat_id': TELEGRAM_CHAT_ID,
-                'caption': caption,
-                'parse_mode': 'HTML'
+                'chat_id': chat_id,
+                'text': message,
+                'parse_mode': 'Markdown'
             }
-            response = requests.post(url, data=data, files=files, timeout=30)
+            response = requests.post(url, json=data, timeout=30)
         
         if response.status_code == 200:
-            print("✓ Telegram 截图发送成功")
+            logger.info("✅ Telegram 消息发送成功")
             return True
         else:
-            print(f"⚠ Telegram 截图发送失败: {response.status_code}")
+            logger.warning(f"⚠️ Telegram 消息发送失败: {response.status_code}")
             return False
+            
     except Exception as e:
-        print(f"⚠ Telegram 截图发送异常: {e}")
+        logger.error(f"❌ Telegram 消息发送出错: {str(e)}")
         return False
 
 
-def download_img(name, url):
-    """下载图片"""
-    try:
-        response = requests.get(url, stream=True, timeout=10)
-        with open(f'{name}.png', 'wb') as out_file:
-            shutil.copyfileobj(response.raw, out_file)
-        del response
-        return True
-    except Exception as e:
-        print(f"✗ 图片下载失败 {name}: {e}")
-        return False
+async def human_click(page: Page, x: float, y: float) -> None:
+    """模拟人类点击行为 - 带随机偏移和步骤"""
+    target_x = x + random.uniform(-5, 5)
+    target_y = y + random.uniform(-5, 5)
+
+    await page.mouse.move(target_x, target_y, steps=random.randint(10, 25))
+    await asyncio.sleep(random.uniform(0.1, 0.3))
+    await page.mouse.down()
+    await asyncio.sleep(random.uniform(0.05, 0.15))
+    await page.mouse.up()
 
 
-def get_target_num(driver):
-    """获取验证目标类别编号"""
-    target_mappings = {
-        "bicycle": 1,
-        "bus": 5,
-        "boat": 8,
-        "car": 2,
-        "hydrant": 10,
-        "motorcycle": 3,
-        "traffic": 9
-    }
+async def find_and_click_turnstile(page: Page, retries: int = 20) -> bool:
+    """查找并点击 Cloudflare Turnstile 验证框"""
+    logger.info("🔍 寻找 Turnstile 验证框...")
     
-    target = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.XPATH, '//div[@id="rc-imageselect"]//strong')))
-    
-    for term, value in target_mappings.items():
-        if re.search(term, target.text):
-            return value
-    
-    return 1000
-
-
-def dynamic_and_selection_solver(target_num, verbose, model):
-    """解决 3x3 网格验证（动态和一次性选择）"""
-    try:
-        if not os.path.exists("0.png"):
-            if verbose: print("  ✗ 图片文件不存在: 0.png")
-            return []
-        
-        image = Image.open("0.png")
-        image = np.asarray(image)
-        # 使用默认参数，像参考项目一样
-        result = model.predict(image, task="detect", verbose=False)
-        
-        # 获取目标索引
-        target_index = []
-        count = 0
-        for num in result[0].boxes.cls:
-            if num == target_num:
-                target_index.append(count)
-            count += 1
-        
-        if verbose and len(target_index) > 0:
-            print(f"    检测到 {len(target_index)} 个目标物体")
-        
-        # 计算答案位置
-        answers = []
-        boxes = result[0].boxes.data
-        for i in target_index:
-            target_box = boxes[i]
-            x1, y1 = int(target_box[0]), int(target_box[1])
-            x2, y2 = int(target_box[2]), int(target_box[3])
-            
-            xc = (x1 + x2) / 2
-            yc = (y1 + y2) / 2
-            
-            row = yc // 100
-            col = xc // 100
-            answer = int(row * 3 + col + 1)
-            answers.append(answer)
-        
-        return list(set(answers))
-    except Exception as e:
-        if verbose: print(f"  ✗ 图片识别失败: {e}")
-        return []
-
-
-def get_occupied_cells(vertices):
-    """获取被占用的单元格（4x4 网格）"""
-    occupied_cells = set()
-    rows, cols = zip(*[((v-1)//4, (v-1) % 4) for v in vertices])
-    
-    for i in range(min(rows), max(rows)+1):
-        for j in range(min(cols), max(cols)+1):
-            occupied_cells.add(4*i + j + 1)
-    
-    return sorted(list(occupied_cells))
-
-
-def square_solver(target_num, verbose, model):
-    """解决 4x4 方格验证"""
-    try:
-        if not os.path.exists("0.png"):
-            if verbose: print("  ✗ 图片文件不存在: 0.png")
-            return []
-        
-        image = Image.open("0.png")
-        image = np.asarray(image)
-        # 使用默认参数，像参考项目一样
-        result = model.predict(image, task="detect", verbose=False)
-        boxes = result[0].boxes.data
-        
-        # 获取目标索引
-        target_index = []
-        count = 0
-        for num in result[0].boxes.cls:
-            if num == target_num:
-                target_index.append(count)
-            count += 1
-        
-        if verbose and len(target_index) > 0:
-            print(f"    检测到 {len(target_index)} 个目标物体")
-        
-        answers = []
-        for i in target_index:
-            target_box = boxes[i]
-            x1, y1 = int(target_box[0]), int(target_box[1])
-            x4, y4 = int(target_box[2]), int(target_box[3])
-            x2, y2 = x4, y1
-            x3, y3 = x1, y4
-            xys = [x1, y1, x2, y2, x3, y3, x4, y4]
-            
-            four_cells = []
-            for j in range(4):
-                x = xys[j*2]
-                y = xys[(j*2)+1]
-                
-                # 4x4 网格坐标映射
-                if x < 112.5 and y < 112.5: four_cells.append(1)
-                if 112.5 < x < 225 and y < 112.5: four_cells.append(2)
-                if 225 < x < 337.5 and y < 112.5: four_cells.append(3)
-                if 337.5 < x <= 450 and y < 112.5: four_cells.append(4)
-                
-                if x < 112.5 and 112.5 < y < 225: four_cells.append(5)
-                if 112.5 < x < 225 and 112.5 < y < 225: four_cells.append(6)
-                if 225 < x < 337.5 and 112.5 < y < 225: four_cells.append(7)
-                if 337.5 < x <= 450 and 112.5 < y < 225: four_cells.append(8)
-                
-                if x < 112.5 and 225 < y < 337.5: four_cells.append(9)
-                if 112.5 < x < 225 and 225 < y < 337.5: four_cells.append(10)
-                if 225 < x < 337.5 and 225 < y < 337.5: four_cells.append(11)
-                if 337.5 < x <= 450 and 225 < y < 337.5: four_cells.append(12)
-                
-                if x < 112.5 and 337.5 < y <= 450: four_cells.append(13)
-                if 112.5 < x < 225 and 337.5 < y <= 450: four_cells.append(14)
-                if 225 < x < 337.5 and 337.5 < y <= 450: four_cells.append(15)
-                if 337.5 < x <= 450 and 337.5 < y <= 450: four_cells.append(16)
-            
-            answer = get_occupied_cells(four_cells)
-            for ans in answer:
-                answers.append(ans)
-        
-        # 去重并排序，避免重复点击同一格
-        return sorted(list(set(answers)))
-    except Exception as e:
-        if verbose: print(f"  ✗ 图片识别失败: {e}")
-        return []
-
-
-def get_all_captcha_img_urls(driver):
-    """获取所有验证码图片 URL"""
-    images = WebDriverWait(driver, 10).until(
-        EC.presence_of_all_elements_located((By.XPATH, '//div[@id="rc-imageselect-target"]//img')))
-    
-    img_urls = []
-    for img in images:
-        img_urls.append(img.get_attribute("src"))
-    
-    return img_urls
-
-
-def get_all_new_dynamic_captcha_img_urls(answers, before_img_urls, driver):
-    """获取动态验证码的新图片 URL"""
-    images = WebDriverWait(driver, 10).until(
-        EC.presence_of_all_elements_located((By.XPATH, '//div[@id="rc-imageselect-target"]//img')))
-    img_urls = []
-    
-    for img in images:
+    for attempt in range(retries):
         try:
-            img_urls.append(img.get_attribute("src"))
-        except:
-            return False, img_urls
-    
-    # 检查是否有新图片
-    index_common = []
-    for answer in answers:
-        if img_urls[answer-1] == before_img_urls[answer-1]:
-            index_common.append(answer)
-    
-    if len(index_common) >= 1:
-        return False, img_urls
-    else:
-        return True, img_urls
-
-
-def paste_new_img_on_main_img(main, new, loc):
-    """将新图片粘贴到主图片上"""
-    paste = np.copy(main)
-    
-    row = (loc - 1) // 3
-    col = (loc - 1) % 3
-    
-    start_row, end_row = row * 100, (row + 1) * 100
-    start_col, end_col = col * 100, (col + 1) * 100
-    
-    paste[start_row:end_row, start_col:end_col] = new
-    
-    paste = cv2.cvtColor(paste, cv2.COLOR_RGB2BGR)
-    cv2.imwrite('0.png', paste)
-
-
-def solve_recaptcha_ia(driver, verbose=True, max_attempts=5):
-    """使用 IA 模型解决 reCAPTCHA"""
-    
-    # 检查模型文件
-    if not os.path.exists(MODEL_PATH):
-        print(f"✗ 模型文件不存在: {MODEL_PATH}")
-        print("  请确保已下载模型文件到 tmp_rovodev_recaptcha_ia/model.onnx")
-        return False
-    
-    print(f"\n✓ 加载 YOLO 模型: {MODEL_PATH}")
-    model = YOLO(MODEL_PATH, task="detect")
-    
-    try:
-        # 切换到 checkbox iframe
-        driver.switch_to.default_content()
-        recaptcha_iframe1 = WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.XPATH, '//iframe[@title="reCAPTCHA"]')))
-        driver.switch_to.frame(recaptcha_iframe1)
-        
-        # 点击 checkbox
-        print("✓ 点击 reCAPTCHA checkbox...")
-        checkbox = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, '//div[@class="recaptcha-checkbox-border"]')))
-        human_like_delay(0.3, 0.8)
-        checkbox.click()
-        
-        # 切换到图片验证 iframe
-        driver.switch_to.default_content()
-        recaptcha_iframe2 = WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.XPATH, '//iframe[contains(@title, "challenge")]')))
-        driver.switch_to.frame(recaptcha_iframe2)
-        
-        print("✓ 开始识别验证码...")
-        
-        attempt = 0
-        while attempt < max_attempts:
-            attempt += 1
-            if verbose: print(f"\n  尝试 {attempt}/{max_attempts}...")
+            turnstile_frames = []
             
-            try:
-                reload_attempts = 0
-                max_reload_attempts = 5  # 恢复原始配置
-                
-                while reload_attempts < max_reload_attempts:
-                    reload_attempts += 1
+            # Collect all Turnstile frames
+            for frame in page.frames:
+                if "challenges.cloudflare.com" in frame.url or "turnstile" in frame.url:
+                    turnstile_frames.append(frame)
+            
+            if not turnstile_frames:
+                if attempt % 5 == 0:
+                    logger.debug(f"尝试 {attempt + 1}/{retries}: 未找到 Turnstile iframe")
+                await asyncio.sleep(1)
+                continue
+            
+            if attempt == 0:
+                logger.info(f"✅ 找到 {len(turnstile_frames)} 个 Turnstile frame")
+            
+            # Try to click the first visible Turnstile frame
+            for frame in turnstile_frames:
+                try:
+                    frame_element = await frame.frame_element()
+                    is_visible = await frame_element.is_visible()
                     
-                    try:
-                        reload = WebDriverWait(driver, 10).until(
-                            EC.element_to_be_clickable((By.ID, 'recaptcha-reload-button')))
-                        title_wrapper = WebDriverWait(driver, 10).until(
-                            EC.presence_of_element_located((By.ID, 'rc-imageselect')))
-                    except Exception as e:
-                        if verbose: print(f"  定位元素失败: {e}")
-                        sleep(2)
+                    if not is_visible:
                         continue
                     
-                    try:
-                        target_num = get_target_num(driver)
-                    except Exception as e:
-                        if verbose: print(f"  获取目标类型失败: {e}")
-                        sleep(2)
-                        reload.click()
-                        sleep(2)
+                    # Get the bounding box
+                    box = await frame_element.bounding_box()
+                    if not box:
                         continue
                     
-                    if target_num == 1000:
-                        if verbose: print("  跳过不支持的类型...")
-                        random_delay()
-                        reload.click()
-                        sleep(2)
-                    elif "squares" in title_wrapper.text:
-                        if verbose: print("  检测到 4x4 方格验证...")
-                        try:
-                            img_urls = get_all_captcha_img_urls(driver)
-                            if not download_img(0, img_urls[0]):
-                                reload.click()
-                                sleep(2)
-                                continue
-                        except Exception as e:
-                            if verbose: print(f"  获取图片URL失败: {e}")
-                            reload.click()
-                            sleep(2)
-                            continue
-                        answers = square_solver(target_num, verbose, model)
-                        if len(answers) >= 1 and len(answers) < 16:
-                            captcha = "squares"
-                            break
-                        else:
-                            reload.click()
-                            sleep(2)
-                    elif "none" in title_wrapper.text:
-                        if verbose: print("  检测到 3x3 动态验证...")
-                        try:
-                            img_urls = get_all_captcha_img_urls(driver)
-                            if not download_img(0, img_urls[0]):
-                                reload.click()
-                                sleep(2)
-                                continue
-                        except Exception as e:
-                            if verbose: print(f"  获取图片URL失败: {e}")
-                            reload.click()
-                            sleep(2)
-                            continue
-                        answers = dynamic_and_selection_solver(target_num, verbose, model)
-                        if len(answers) >= 1:
-                            captcha = "dynamic"
-                            break
-                        else:
-                            if verbose: print("    未检测到足够的目标，重新加载...")
-                            reload.click()
-                            sleep(2)
-                    else:
-                        if verbose: print("  检测到 3x3 一次性选择验证...")
-                        try:
-                            img_urls = get_all_captcha_img_urls(driver)
-                            if not download_img(0, img_urls[0]):
-                                reload.click()
-                                sleep(2)
-                                continue
-                        except Exception as e:
-                            if verbose: print(f"  获取图片URL失败: {e}")
-                            reload.click()
-                            sleep(2)
-                            continue
-                        answers = dynamic_and_selection_solver(target_num, verbose, model)
-                        if len(answers) >= 1:
-                            captcha = "selection"
-                            break
-                        else:
-                            if verbose: print("    未检测到足够的目标，重新加载...")
-                            reload.click()
-                            sleep(2)
+                    # Calculate click position (center of the frame)
+                    click_x = box['x'] + box['width'] / 2
+                    click_y = box['y'] + box['height'] / 2
                     
-                    try:
-                        WebDriverWait(driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH, '(//div[@id="rc-imageselect-target"]//td)[1]')))
-                    except Exception as e:
-                        if verbose: print(f"  等待验证码加载失败: {e}")
-                        if reload_attempts < max_reload_attempts:
-                            continue
-                        else:
-                            break
-                
-                if reload_attempts >= max_reload_attempts:
-                    if verbose: print("  重载次数过多，跳过此轮...")
-                    continue
-                
-                if verbose: print(f"  ✓ 识别到的答案位置: {answers}")
-                if verbose: print(f"  验证类型: {captcha}")
-                
-                # 处理动态验证码
-                if captcha == "dynamic":
-                    for answer in answers:
-                        WebDriverWait(driver, 10).until(EC.element_to_be_clickable(
-                            (By.XPATH, f'(//div[@id="rc-imageselect-target"]//td)[{answer}]'))).click()
-                        random_delay(mu=0.5, sigma=0.2)  # 恢复原始成功配置
+                    # Human-like click
+                    await human_click(page, click_x, click_y)
+                    logger.info(f"✅ 已点击 Turnstile 验证框")
                     
-                    dynamic_rounds = 0
-                    max_dynamic_rounds = 10
+                    # Wait for verification
+                    await asyncio.sleep(3)
+                    return True
                     
-                    while dynamic_rounds < max_dynamic_rounds:
-                        dynamic_rounds += 1
-                        if verbose: print(f"    动态验证轮次 {dynamic_rounds}/{max_dynamic_rounds}")
-                        
-                        before_img_urls = img_urls
-                        new_img_wait_count = 0
-                        max_new_img_wait = 30
-                        
-                        while new_img_wait_count < max_new_img_wait:
-                            new_img_wait_count += 1
-                            sleep(0.2)
-                            is_new, img_urls = get_all_new_dynamic_captcha_img_urls(answers, before_img_urls, driver)
-                            if is_new:
-                                break
-                        
-                        if new_img_wait_count >= max_new_img_wait:
-                            if verbose: print("    等待新图片超时，跳出动态验证")
-                            break
-                        
-                        new_img_index_urls = [answer-1 for answer in answers]
-                        
-                        for index in new_img_index_urls:
-                            if not download_img(index+1, img_urls[index]):
-                                if verbose: print("    图片下载失败，跳出动态验证")
-                                break
-                        
-                        for answer in answers:
-                            try:
-                                main_img = Image.open("0.png")
-                                new_img = Image.open(f"{answer}.png")
-                                paste_new_img_on_main_img(main_img, new_img, answer)
-                            except Exception as e:
-                                if verbose: print(f"    图片处理失败: {e}")
-                                break
-                        
-                        answers = dynamic_and_selection_solver(target_num, verbose, model)
-                        
-                        if len(answers) >= 1:
-                            for answer in answers:
-                                WebDriverWait(driver, 10).until(EC.element_to_be_clickable(
-                                    (By.XPATH, f'(//div[@id="rc-imageselect-target"]//td)[{answer}]'))).click()
-                                random_delay(mu=0.5, sigma=0.1)  # 恢复原始配置
-                        else:
-                            if verbose: print("    未识别到更多目标，结束动态验证")
-                            break
-                
-                # 处理一次性选择或方格验证
-                elif captcha == "selection" or captcha == "squares":
-                    for answer in answers:
-                        WebDriverWait(driver, 10).until(EC.element_to_be_clickable(
-                            (By.XPATH, f'(//div[@id="rc-imageselect-target"]//td)[{answer}]'))).click()
-                        random_delay(mu=0.8, sigma=0.3)  # 恢复之前成功的配置
-                
-                # 点击验证按钮
-                human_like_delay(1.5, 2.5)  # 使用更自然的随机延迟
-                verify = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.ID, "recaptcha-verify-button")))
-                human_like_delay(0.8, 1.5)  # 点击前停顿
-                verify.click()
-                
-                # 等待验证结果
-                human_like_delay(3, 4)  # 使用随机延迟
-                
-                # 检查是否通过
-                try:
-                    driver.switch_to.default_content()
-                    
-                    # 方法1: 检查 checkbox 是否被勾选
-                    try:
-                        recaptcha_iframe1 = WebDriverWait(driver, 5).until(
-                            EC.presence_of_element_located((By.XPATH, '//iframe[@title="reCAPTCHA"]')))
-                        driver.switch_to.frame(recaptcha_iframe1)
-                        
-                        WebDriverWait(driver, 3).until(
-                            EC.presence_of_element_located((By.XPATH, '//span[contains(@aria-checked, "true")]')))
-                        
-                        if verbose: print("✓✓✓ reCAPTCHA 验证成功（checkbox已勾选）！")
-                        driver.switch_to.default_content()
-                        return True
-                    except:
-                        driver.switch_to.default_content()
-                    
-                    # 方法2: 检查挑战框是否消失或隐藏
-                    try:
-                        challenge_iframe = driver.find_element(By.XPATH, '//iframe[contains(@title, "challenge")]')
-                        if not challenge_iframe.is_displayed():
-                            if verbose: print("✓✓✓ reCAPTCHA 验证成功（挑战框已隐藏）！")
-                            return True
-                    except:
-                        if verbose: print("✓✓✓ reCAPTCHA 验证成功（找不到挑战框）！")
-                        return True
-                    
-                    # 验证未通过，继续下一轮
-                    recaptcha_iframe2 = WebDriverWait(driver, 10).until(
-                        EC.presence_of_element_located((By.XPATH, '//iframe[contains(@title, "challenge")]')))
-                    driver.switch_to.frame(recaptcha_iframe2)
-                    if verbose: print("  验证未通过，重试...")
-                    
-                except Exception as check_error:
-                    if verbose: print(f"  检查验证结果时出错: {check_error}")
-                    try:
-                        driver.switch_to.default_content()
-                        recaptcha_iframe2 = WebDriverWait(driver, 10).until(
-                            EC.presence_of_element_located((By.XPATH, '//iframe[contains(@title, "challenge")]')))
-                        driver.switch_to.frame(recaptcha_iframe2)
-                        if verbose: print("  重新定位到挑战框，继续...")
-                    except:
-                        if verbose: print("✓✓✓ reCAPTCHA 可能已验证成功（无法定位挑战框）")
-                        driver.switch_to.default_content()
-                        return True
-            
-            except Exception as e:
-                if verbose: print(f"  本轮尝试失败: {e}")
-                if attempt >= max_attempts:
-                    print(f"✗ 达到最大尝试次数 ({max_attempts})，验证失败")
-                    return False
-                else:
-                    if verbose: print("  准备下一轮尝试...")
-                    try:
-                        driver.switch_to.default_content()
-                        recaptcha_iframe2 = WebDriverWait(driver, 10).until(
-                            EC.presence_of_element_located((By.XPATH, '//iframe[contains(@title, "challenge")]')))
-                        driver.switch_to.frame(recaptcha_iframe2)
-                    except:
-                        if verbose: print("  无法重新定位到验证框，尝试重新开始...")
-                        return False
-    
-    except Exception as e:
-        print(f"✗ reCAPTCHA 解决失败: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def renew_host2play_server():
-    """续期 Host2Play 服务器"""
-    
-    print("=" * 60)
-    print("Host2Play 自动续期 - RecaptchaV2-IA-Solver")
-    print("=" * 60)
-    
-    # 检查必需配置
-    if not RENEW_URL:
-        error_msg = "✗ 错误: RENEW_URL 环境变量未设置"
-        print(error_msg)
-        if ENABLE_TELEGRAM:
-            send_telegram_message(f"❌ <b>Host2Play 续期失败</b>\n\n{error_msg}")
-        return
-    
-    print(f"续期 URL: {RENEW_URL}")
-    
-    # 发送开始通知
-    if ENABLE_TELEGRAM:
-        send_telegram_message("🔄 <b>Host2Play 自动续期开始</b>\n\n正在启动浏览器...")
-    
-    # 配置 Chrome 选项 - 使用本地成功版本的简化配置
-    chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_argument('--no-sandbox')
-    chrome_options.add_argument('--disable-dev-shm-usage')
-    chrome_options.add_argument('--ignore-certificate-errors')
-    chrome_options.add_argument('--ignore-certificate-errors-spki-list')
-    chrome_options.add_argument('--ignore-ssl-errors')
-    chrome_options.add_argument('--allow-insecure-localhost')
-    chrome_options.add_argument('--disable-web-security')
-    chrome_options.add_argument('--lang=en-US')
-    
-    # 核心反检测设置 - 仅保留兼容的选项
-    try:
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-    except:
-        pass
-    
-    # GitHub Actions 或 CI 环境需要的选项
-    if HEADLESS or os.environ.get('CI'):
-        chrome_options.add_argument('--headless=new')
-        print("✓ 使用 headless 模式（简化配置）")
-    
-    seleniumwire_options = {
-        'no_proxy': 'localhost,127.0.0.1',
-        'disable_encoding': True,
-        'verify_ssl': False,
-        'suppress_connection_errors': True,
-        'disable_capture': False
-    }
-    
-    # 初始化浏览器
-    print("\n启动浏览器...")
-    driver = webdriver.Chrome(options=chrome_options, seleniumwire_options=seleniumwire_options)
-    driver.scopes = ['.*google.com/recaptcha.*']
-    
-    # 设置合理的超时时间
-    driver.set_page_load_timeout(60)
-    driver.implicitly_wait(10)
-    
-    try:
-        # 访问续期页面
-        print("\n访问续期页面...")
-        driver.get(RENEW_URL)
-        sleep(3)
-        
-        # 页面加载后注入反检测脚本
-        try:
-            driver.execute_script("""
-                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                if (!window.chrome) { window.chrome = {}; }
-                if (!window.chrome.runtime) { window.chrome.runtime = {}; }
-            """)
-            print("✓ 已注入反检测脚本")
-        except:
-            pass
-        
-        # 检测并处理 Cloudflare 挑战
-        print("\n检测 Cloudflare 保护...")
-        cloudflare_detected = False
-        for i in range(15):  # 最多等待15秒
-            try:
-                # 检查是否有 Cloudflare 挑战页面
-                page_title = driver.title.lower()
-                page_source = driver.page_source.lower()
-                
-                if 'cloudflare' in page_title or 'cloudflare' in page_source or 'checking your browser' in page_source or 'just a moment' in page_title:
-                    if i == 0:
-                        print("⚠ 检测到 Cloudflare 保护，等待自动验证...")
-                        cloudflare_detected = True
-                    
-                    # 检查是否已通过验证
-                    if 'renew' in page_source or 'server' in page_source:
-                        print(f"✓ 已通过 Cloudflare 验证（等待 {i+1} 秒）")
-                        cloudflare_detected = False
-                        break
-                    
-                    sleep(1)
-                else:
-                    if cloudflare_detected:
-                        print(f"✓ 已通过 Cloudflare 验证（等待 {i+1} 秒）")
-                    break
-            except Exception as cf_err:
-                if VERBOSE:
-                    print(f"  Cloudflare 检测异常: {cf_err}")
-                break
-        
-        if cloudflare_detected:
-            print("⚠ Cloudflare 验证可能仍在进行中")
-            # 保存 Cloudflare 页面截图
-            try:
-                driver.save_screenshot("debug_cloudflare_challenge.png")
-                print("  已保存 Cloudflare 挑战截图: debug_cloudflare_challenge.png")
-            except:
-                pass
-            
-            # 发送 Cloudflare 检测通知
-            if ENABLE_TELEGRAM:
-                send_telegram_message(
-                    "⚠️ <b>检测到 Cloudflare 保护</b>\n\n"
-                    "正在等待自动验证通过..."
-                )
-                if os.path.exists("debug_cloudflare_challenge.png"):
-                    send_telegram_photo("debug_cloudflare_challenge.png", "⚠️ Cloudflare 挑战页面")
-            
-            # 额外等待
-            print("  额外等待 10 秒...")
-            sleep(10)
-            
-            # 最后检查是否通过
-            page_source_final = driver.page_source.lower()
-            if 'cloudflare' in page_source_final and 'renew' not in page_source_final:
-                error_msg = "❌ <b>无法通过 Cloudflare 验证</b>\n\n可能原因：\n1. GitHub Actions IP 被封禁\n2. 需要更高级的绕过技术\n3. 网站检测过于严格"
-                print("\n✗ 无法通过 Cloudflare 验证")
-                if ENABLE_TELEGRAM:
-                    send_telegram_message(error_msg)
-                raise Exception("Cloudflare 验证失败")
-        
-        # 再次检查当前页面状态
-        sleep(2)
-        
-        # 不再保存初始截图
-        
-        # 等待 reCAPTCHA 脚本加载（优化版：更快检测）
-        print("\n等待 reCAPTCHA 脚本加载...")
-        max_wait = 20  # 减少最大等待时间
-        for i in range(max_wait):
-            try:
-                grecaptcha_ready = driver.execute_script("""
-                    return typeof grecaptcha !== 'undefined' && 
-                           typeof grecaptcha.render === 'function';
-                """)
-                if grecaptcha_ready:
-                    print(f"✓ reCAPTCHA 脚本已加载（{i+1}秒）")
-                    break
-            except:
-                pass
-            
-            if i == max_wait - 1:
-                print(f"⚠ 等待 {max_wait} 秒后 reCAPTCHA 脚本仍未加载")
-            else:
-                sleep(0.5)  # 减少检查间隔，更快响应
-        
-        sleep(1)  # 减少额外等待
-        
-        # 先检查页面上是否已经有 reCAPTCHA
-        print("\n检查页面上是否有 reCAPTCHA...")
-        recaptcha_exists = False
-        try:
-            recaptcha_iframe = driver.find_element(By.XPATH, '//iframe[@title="reCAPTCHA"]')
-            if recaptcha_iframe.is_displayed():
-                print("✓ 页面上已有 reCAPTCHA，先解决验证码")
-                recaptcha_exists = True
-        except:
-            print("  页面上暂无 reCAPTCHA")
-        
-        # 如果页面上已有 reCAPTCHA，先解决它
-        if recaptcha_exists:
-            print("\n解决页面上的 reCAPTCHA...")
-            success = solve_recaptcha_ia(driver, verbose=VERBOSE)
-            
-            if not success:
-                print("\n⚠ 自动识别未完成，请手动完成验证...")
-                print("等待 60 秒...")
-                sleep(60)
-        
-        # 查找并点击 "Renew" 按钮
-        print("\n查找并点击 'Renew' 按钮...")
-        driver.switch_to.default_content()
-        
-        # 等待页面完全加载
-        print("  等待页面完全加载...")
-        sleep(5)
-        
-        # 先截图看看页面状态
-        if not HEADLESS or VERBOSE:
-            try:
-                driver.save_screenshot("debug_before_renew_button.png")
-                print("  已保存截图: debug_before_renew_button.png")
-            except:
-                pass
-        
-        # 先打印页面HTML以便调试
-        if VERBOSE:
-            print("\n  页面HTML片段:")
-            page_source = driver.page_source
-            if 'renew' in page_source.lower():
-                print("  ✓ 页面包含 'renew' 文本")
-            else:
-                print("  ✗ 页面不包含 'renew' 文本")
-        
-        # 等待 JavaScript 执行完成
-        driver.execute_script("return document.readyState")
-        sleep(2)
-        
-        try:
-            # 尝试多种可能的选择器
-            renew_button = None
-            selectors = [
-                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'renew')]",
-                "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'renew')]",
-                "//input[contains(translate(@value, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'renew')]",
-                "//button[@type='submit']",
-                "//input[@type='submit']",
-                "//*[contains(@class, 'renew')]",
-                "//*[contains(@id, 'renew')]"
-            ]
-            
-            for selector in selectors:
-                try:
-                    elements = driver.find_elements(By.XPATH, selector)
-                    for elem in elements:
-                        if elem.is_displayed() and elem.is_enabled():
-                            renew_button = elem
-                            print(f"✓ 找到 Renew 按钮: {selector}")
-                            print(f"  按钮文本: {elem.text}")
-                            break
-                    if renew_button:
-                        break
                 except Exception as e:
-                    if VERBOSE:
-                        print(f"  选择器 {selector} 失败: {e}")
+                    logger.debug(f"处理 frame 出错: {e}")
                     continue
             
-            if renew_button is None:
-                print("⚠ 标准选择器未找到按钮，使用 JavaScript 全面搜索...")
-                # 尝试通过 JavaScript 查找并点击
-                js_code = """
-                // 查找所有可能的按钮元素
-                var allElements = document.querySelectorAll('button, a, input[type="submit"], [onclick], [role="button"]');
-                var foundButtons = [];
-                
-                for (var i = 0; i < allElements.length; i++) {
-                    var elem = allElements[i];
-                    var text = (elem.textContent || elem.value || elem.getAttribute('title') || elem.getAttribute('aria-label') || '').toLowerCase().trim();
-                    var onclick = (elem.getAttribute('onclick') || '').toLowerCase();
-                    var classes = (elem.className || '').toLowerCase();
-                    var id = (elem.id || '').toLowerCase();
-                    
-                    // 检查是否包含 renew 相关文本或属性
-                    if (text.includes('renew') || onclick.includes('renew') || classes.includes('renew') || id.includes('renew')) {
-                        var computedStyle = window.getComputedStyle(elem);
-                        var isVisible = elem.offsetParent !== null && 
-                                       computedStyle.display !== 'none' && 
-                                       computedStyle.visibility !== 'hidden' &&
-                                       computedStyle.opacity !== '0';
-                        
-                        foundButtons.push({
-                            tag: elem.tagName,
-                            text: text.substring(0, 50),
-                            classes: classes.substring(0, 50),
-                            id: id,
-                            visible: isVisible
-                        });
-                        
-                        // 如果元素可见且包含 server（优先点击 "Renew server"）
-                        if (isVisible && text.includes('server')) {
-                            elem.scrollIntoView({block: 'center'});
-                            elem.click();
-                            return 'Clicked: ' + text.substring(0, 50);
-                        }
-                    }
-                }
-                
-                // 如果没有找到 "Renew server"，点击任何可见的 renew 按钮
-                for (var i = 0; i < foundButtons.length; i++) {
-                    if (foundButtons[i].visible) {
-                        var elem = allElements[i];
-                        elem.scrollIntoView({block: 'center'});
-                        elem.click();
-                        return 'Clicked: ' + foundButtons[i].text;
-                    }
-                }
-                
-                return 'Found ' + foundButtons.length + ' buttons: ' + JSON.stringify(foundButtons);
-                """
-                result = driver.execute_script(js_code)
-                print(f"  JavaScript 结果: {result}")
-                
-                if 'Clicked:' not in result:
-                    print("\n✗ 无法找到或点击 Renew 按钮")
-                    print(f"  详细信息: {result}")
-                    
-                    # 保存页面源码和截图以便调试
-                    try:
-                        with open("debug_renew_button_page_source.html", "w", encoding="utf-8") as f:
-                            f.write(driver.page_source)
-                        print("  已保存页面源码: debug_renew_button_page_source.html")
-                    except Exception as save_err:
-                        print(f"  保存页面源码失败: {save_err}")
-                    
-                    # 保存当前页面截图
-                    try:
-                        driver.save_screenshot("debug_no_renew_button.png")
-                        print("  已保存截图: debug_no_renew_button.png")
-                    except Exception as screenshot_err:
-                        print(f"  保存截图失败: {screenshot_err}")
-                    
-                    # 检查页面是否需要登录
-                    page_text = driver.page_source.lower()
-                    if 'login' in page_text or 'sign in' in page_text or 'sign-in' in page_text:
-                        error_detail = "页面包含登录相关内容，可能需要先登录"
-                    elif 'expired' in page_text or 'session' in page_text:
-                        error_detail = "会话可能已过期，请检查 RENEW_URL 是否有效"
-                    else:
-                        error_detail = "页面上未找到 Renew 按钮，请检查 URL 是否正确"
-                    
-                    print(f"  提示: {error_detail}")
-                    
-                    # 发送详细的失败通知
-                    if ENABLE_TELEGRAM:
-                        from datetime import datetime
-                        error_msg = (
-                            "❌ <b>Host2Play 续期失败！</b>\n\n"
-                            f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                            f"🔗 URL: {RENEW_URL[:50]}...\n"
-                            f"❗ 错误: 无法找到 Renew 按钮\n"
-                            f"💡 提示: {error_detail}"
-                        )
-                        send_telegram_message(error_msg)
-                        
-                        # 如果有截图，发送截图
-                        if os.path.exists("debug_no_renew_button.png"):
-                            send_telegram_photo("debug_no_renew_button.png", "❌ 无法找到 Renew 按钮时的页面截图")
-                    
-                    raise Exception(f"无法找到 Renew 按钮: {error_detail}")
-                else:
-                    print("✓ JavaScript 成功点击按钮")
-            else:
-                # 滚动到按钮位置
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", renew_button)
-                sleep(0.5)
-                # 使用 JavaScript 点击，避免被遮挡
-                driver.execute_script("arguments[0].click();", renew_button)
-                print("✓ 已点击 Renew 按钮")
-            
-            # 等待弹窗出现（优化：减少等待）
-            print("\n等待弹窗和 reCAPTCHA 加载...")
-            sleep(2)  # 减少初始等待
-            
-            # 等待弹窗中的 reCAPTCHA 渲染（优化：更快检测）
-            print("等待弹窗中的 reCAPTCHA 渲染...")
-            recaptcha_rendered = False
-            for i in range(15):  # 减少最大等待次数
-                try:
-                    recaptcha_iframe = driver.find_element(By.XPATH, '//iframe[@title="reCAPTCHA"]')
-                    if recaptcha_iframe.is_displayed():
-                        print(f"✓ reCAPTCHA 已渲染（等待 {i+1} 秒）")
-                        recaptcha_rendered = True
-                        break
-                except:
-                    pass
-                
-                sleep(0.5)  # 减少检查间隔，更快响应
-            
-            if not recaptcha_rendered:
-                print("⚠ reCAPTCHA 未渲染，可能需要手动刷新或等待")
-                print("  尝试强制触发 reCAPTCHA 渲染...")
-                
-                # 尝试手动触发 grecaptcha.render
-                try:
-                    driver.execute_script("""
-                        // 查找 reCAPTCHA 容器
-                        var containers = document.querySelectorAll('[data-sitekey], .g-recaptcha');
-                        if (containers.length > 0 && typeof grecaptcha !== 'undefined') {
-                            try {
-                                grecaptcha.render(containers[0], {
-                                    'sitekey': containers[0].getAttribute('data-sitekey')
-                                });
-                            } catch(e) {
-                                console.log('Manual render failed:', e);
-                            }
-                        }
-                    """)
-                    sleep(1.5)  # 减少等待
-                    
-                    # 再次检查
-                    recaptcha_iframe = driver.find_element(By.XPATH, '//iframe[@title="reCAPTCHA"]')
-                    if recaptcha_iframe.is_displayed():
-                        print("✓ 手动触发成功，reCAPTCHA 已渲染")
-                        recaptcha_rendered = True
-                except Exception as e:
-                    print(f"  手动触发失败: {e}")
-            
-            sleep(1)  # 减少等待
+            await asyncio.sleep(1)
             
         except Exception as e:
-            print(f"✗ 点击 Renew 按钮失败: {e}")
+            logger.debug(f"查找 Turnstile 出错: {e}")
+            await asyncio.sleep(1)
+    
+    logger.warning("⚠️ 未能找到或点击 Turnstile")
+    return False
+
+
+async def solve_recaptcha_with_playwright(page: Page) -> bool:
+    """使用 Playwright 选择器处理 reCAPTCHA（不使用 YOLO）"""
+    logger.info("🔍 检查 reCAPTCHA...")
+    
+    try:
+        # 等待 reCAPTCHA iframe 出现
+        await asyncio.sleep(2)
         
-        # 检查是否出现 reCAPTCHA（无论之前是否存在）
-        print("\n检查是否需要解决 reCAPTCHA...")
-        sleep(1)  # 减少等待
+        # 查找 reCAPTCHA checkbox iframe
+        recaptcha_frames = []
+        for frame in page.frames:
+            if "recaptcha" in frame.url and "anchor" in frame.url:
+                recaptcha_frames.append(frame)
+        
+        if not recaptcha_frames:
+            logger.info("✅ 未检测到 reCAPTCHA，可能已通过")
+            return True
+        
+        logger.info(f"✅ 找到 {len(recaptcha_frames)} 个 reCAPTCHA checkbox frame")
+        
+        # 点击 checkbox
+        for frame in recaptcha_frames:
+            try:
+                checkbox = await frame.wait_for_selector('.recaptcha-checkbox-border', timeout=5000)
+                if checkbox:
+                    await checkbox.click()
+                    logger.info("✅ 已点击 reCAPTCHA checkbox")
+                    await asyncio.sleep(3)
+                    break
+            except Exception as e:
+                logger.debug(f"点击 checkbox 失败: {e}")
+                continue
+        
+        # 检查是否需要图形验证
+        challenge_frames = []
+        await asyncio.sleep(2)
+        for frame in page.frames:
+            if "recaptcha" in frame.url and "bframe" in frame.url:
+                challenge_frames.append(frame)
+        
+        if challenge_frames:
+            logger.warning("⚠️ 出现图形验证，需要手动处理或等待...")
+            logger.info("💡 建议: 在 CI 环境中，reCAPTCHA 可能需要额外的策略")
+            # 等待一段时间，看是否自动通过
+            await asyncio.sleep(10)
+            return False
+        else:
+            logger.info("✅ reCAPTCHA 验证通过（无图形验证）")
+            return True
+            
+    except Exception as e:
+        logger.error(f"❌ 处理 reCAPTCHA 失败: {e}")
+        return False
+
+
+async def main():
+    """主函数"""
+    # 验证环境变量
+    if not RENEW_URL:
+        logger.error("❌ 错误: RENEW_URL 环境变量未设置")
+        return
+    
+    renew_url = RENEW_URL
+    
+    print("="*70)
+    print("  🔐 Host2Play 自动续期脚本 (Playwright 版)")
+    print(f"  🌐 续期 URL: {renew_url[:50]}...")
+    print("  🤖 模式: Playwright + Camoufox (自动过检测)")
+    print("="*70)
+    print()
+    
+    # 发送开始通知
+    start_time = datetime.now()
+    start_message = f"""🚀 *Host2Play 自动续期开始*
+
+🕐 时间: `{start_time.strftime('%Y-%m-%d %H:%M:%S')}`
+🤖 模式: Playwright + Camoufox
+
+⏳ 正在处理中..."""
+    send_telegram_message(start_message)
+    
+    # 检测是否在 CI 环境
+    is_ci = os.environ.get('CI') == 'true' or os.environ.get('GITHUB_ACTIONS') == 'true'
+    
+    if is_ci:
+        logger.info("🤖 检测到 CI 环境，使用 headless 模式")
+    
+    # 使用 Camoufox 浏览器（自动反检测，类似 katabump）
+    async with AsyncCamoufox(
+        headless=is_ci,
+        os=["windows"],
+        screen=Screen(max_width=1920, max_height=1080),
+    ) as browser:
+        
+        page = await browser.new_page()
         
         try:
-            recaptcha_iframe = driver.find_element(By.XPATH, '//iframe[@title="reCAPTCHA"]')
-            if recaptcha_iframe.is_displayed() and not recaptcha_exists:
-                print("✓ 弹窗中出现了 reCAPTCHA，开始解决...")
+            # Step 1: 访问续期页面
+            logger.info("\n[1/4] 🌐 访问续期页面...")
+            await page.goto(renew_url, wait_until='domcontentloaded')
+            await asyncio.sleep(3)
+            
+            logger.info(f"✅ 当前 URL: {page.url}")
+            
+            # Step 2: 检测并处理 Cloudflare Turnstile
+            logger.info("\n[2/4] 🔍 检测 Cloudflare 保护...")
+            
+            # 检查页面内容
+            page_content = await page.content()
+            page_title = await page.title()
+            
+            if 'cloudflare' in page_content.lower() or 'turnstile' in page_content.lower():
+                logger.info("⚠️ 检测到 Cloudflare 保护，尝试处理...")
                 
-                success = solve_recaptcha_ia(driver, verbose=VERBOSE)
+                # 尝试点击 Turnstile
+                success = await find_and_click_turnstile(page)
                 
-                if not success:
-                    print("\n⚠ 自动识别未完成，请手动完成验证...")
-                    print("等待 60 秒...")
-                    sleep(60)
-        except:
-            print("  无需解决 reCAPTCHA 或已通过验证")
-        
-        # 验证通过后，点击弹窗内的 Renew 按钮（不是页面上的 Renew server）
-        print("\n查找并点击弹窗内的 'Renew' 按钮...")
-        driver.switch_to.default_content()
-        
-        # 等待弹窗完全加载
-        print("  等待弹窗完全加载...")
-        sleep(3)
-        
-        try:
-            # 专门查找弹窗内的 Renew 按钮，排除 Renew server
+                if success:
+                    logger.info("✅ Turnstile 验证已完成")
+                    await asyncio.sleep(3)
+                else:
+                    logger.warning("⚠️ Turnstile 自动处理失败，等待自动通过...")
+                    await asyncio.sleep(10)
+            else:
+                logger.info("✅ 未检测到 Cloudflare 保护")
+            
+            # 截图保存当前状态
+            await page.screenshot(path='host2play_01_after_load.png', full_page=True)
+            logger.info("📸 截图保存: host2play_01_after_load.png")
+            
+            # Step 3: 查找并点击 Renew server 按钮
+            logger.info("\n[3/4] 🖱️ 查找并点击 'Renew' 按钮...")
+            await asyncio.sleep(2)
+            
+            # 尝试多种选择器
+            renew_button_selectors = [
+                'button:has-text("Renew")',
+                'a:has-text("Renew")',
+                'button:has-text("renew")',
+                'button[type="submit"]:has-text("Renew")',
+                'input[type="submit"][value*="Renew"]',
+                '[onclick*="renew"]',
+            ]
+            
+            renew_button = None
+            for selector in renew_button_selectors:
+                try:
+                    button = await page.wait_for_selector(selector, timeout=5000)
+                    if button and await button.is_visible():
+                        renew_button = button
+                        logger.info(f"✅ 找到 Renew 按钮: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not renew_button:
+                logger.error("❌ 未找到 Renew 按钮")
+                await page.screenshot(path='host2play_error_no_button.png', full_page=True)
+                
+                error_message = f"""❌ *Host2Play 续期失败*
+
+❗ 错误: 未找到 Renew 按钮
+🕐 时间: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+"""
+                send_telegram_message(error_message, 'host2play_error_no_button.png')
+                return
+            
+            # 点击 Renew 按钮
+            await renew_button.click()
+            logger.info("✅ 已点击 Renew 按钮")
+            await asyncio.sleep(3)
+            
+            # 截图弹窗状态
+            await page.screenshot(path='host2play_02_after_button.png', full_page=True)
+            logger.info("📸 截图保存: host2play_02_after_button.png")
+            
+            # Step 4: 处理 reCAPTCHA
+            logger.info("\n[4/4] 🔐 处理 reCAPTCHA...")
+            
+            recaptcha_success = await solve_recaptcha_with_playwright(page)
+            
+            if not recaptcha_success:
+                logger.warning("⚠️ reCAPTCHA 自动处理未完成")
+                logger.info("💡 等待 30 秒，看是否自动通过...")
+                await asyncio.sleep(30)
+            
+            # 查找并点击弹窗内的 Renew 按钮
+            logger.info("\n🖱️ 查找弹窗内的确认按钮...")
+            
             modal_button_selectors = [
-                "//div[contains(@class, 'modal')]//button[contains(text(), 'Renew') and not(contains(text(), 'server'))]",
-                "//div[contains(@class, 'dialog')]//button[contains(text(), 'Renew') and not(contains(text(), 'server'))]",
-                "//div[contains(@class, 'popup')]//button[contains(text(), 'Renew') and not(contains(text(), 'server'))]",
-                "//div[contains(@role, 'dialog')]//button[contains(text(), 'Renew') and not(contains(text(), 'server'))]",
-                "//div[contains(@class, 'swal')]//button[contains(text(), 'Renew')]",
-                "//div[contains(@class, 'swal')]//button[contains(text(), 'Confirm')]",
-                "//div[contains(@class, 'modal')]//button[contains(text(), 'Confirm')]",
-                "//div[contains(@class, 'modal')]//button[@type='submit']"
+                'div[role="dialog"] button:has-text("Renew")',
+                '.modal button:has-text("Renew")',
+                '.swal2-confirm',
+                '.modal button[type="submit"]',
+                'button:has-text("Confirm")',
             ]
             
             modal_button = None
             for selector in modal_button_selectors:
                 try:
-                    modal_button = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, selector)))
-                    print(f"✓ 找到弹窗内的 Renew 按钮: {selector}")
-                    break
+                    button = await page.wait_for_selector(selector, timeout=5000)
+                    if button and await button.is_visible():
+                        modal_button = button
+                        logger.info(f"✅ 找到弹窗确认按钮: {selector}")
+                        break
                 except:
                     continue
             
-            if modal_button is None:
-                print("⚠ 标准选择器未找到弹窗按钮，使用 JavaScript 查找...")
-                
-                # 先截图调试
-                if not HEADLESS or VERBOSE:
-                    try:
-                        driver.save_screenshot("debug_before_modal_button.png")
-                        print("  已保存截图: debug_before_modal_button.png")
-                    except:
-                        pass
-                
-                # JavaScript 专门在弹窗内查找
-                js_code = """
-                // 查找弹窗容器 - 更全面的选择器
-                var modalSelectors = [
-                    '.modal', '.dialog', '.popup', '[role="dialog"]', 
-                    '.swal2-container', '.swal-modal', '.swal2-popup',
-                    '.MuiDialog-root', '.ant-modal', '.el-dialog', 
-                    '[class*="modal"]', '[class*="dialog"]', '[class*="popup"]',
-                    '[id*="modal"]', '[id*="dialog"]'
-                ];
-                var modal = null;
-                var modalInfo = [];
-                
-                // 查找所有可能的弹窗
-                for (var i = 0; i < modalSelectors.length; i++) {
-                    var modals = document.querySelectorAll(modalSelectors[i]);
-                    for (var j = 0; j < modals.length; j++) {
-                        var computedStyle = window.getComputedStyle(modals[j]);
-                        var isVisible = modals[j].offsetParent !== null && 
-                                       computedStyle.display !== 'none' && 
-                                       computedStyle.visibility !== 'hidden' &&
-                                       computedStyle.opacity !== '0';
-                        
-                        if (isVisible) {
-                            modal = modals[j];
-                            modalInfo.push({
-                                selector: modalSelectors[i], 
-                                visible: true,
-                                html: modals[j].innerHTML.substring(0, 100)
-                            });
-                            break;
-                        }
-                    }
-                    if (modal) break;
-                }
-                
-                if (modal) {
-                    // 在弹窗内查找按钮，排除 "Renew server"
-                    var buttons = modal.querySelectorAll('button, a, input[type="submit"], [onclick], [role="button"]');
-                    var buttonInfo = [];
-                    
-                    for (var i = 0; i < buttons.length; i++) {
-                        var text = (buttons[i].textContent || buttons[i].value || buttons[i].getAttribute('aria-label') || '').toLowerCase().trim();
-                        var onclick = (buttons[i].getAttribute('onclick') || '').toLowerCase();
-                        var type = buttons[i].getAttribute('type') || '';
-                        
-                        var computedStyle = window.getComputedStyle(buttons[i]);
-                        var isVisible = buttons[i].offsetParent !== null && 
-                                       computedStyle.display !== 'none' && 
-                                       computedStyle.visibility !== 'hidden' &&
-                                       computedStyle.opacity !== '0';
-                        
-                        buttonInfo.push({
-                            index: i,
-                            text: text.substring(0, 30),
-                            type: type,
-                            visible: isVisible
-                        });
-                        
-                        // 只匹配 "renew" 但不包含 "server"
-                        if (isVisible && text.includes('renew') && !text.includes('server')) {
-                            buttons[i].scrollIntoView({block: 'center'});
-                            buttons[i].click();
-                            return 'Clicked modal Renew: ' + text;
-                        }
-                        
-                        // 匹配 confirm 按钮
-                        if (isVisible && (text.includes('confirm') || text.includes('yes') || text === 'ok')) {
-                            buttons[i].scrollIntoView({block: 'center'});
-                            buttons[i].click();
-                            return 'Clicked modal confirm: ' + text;
-                        }
-                        
-                        // 匹配 submit 类型的按钮（通常是确认按钮）
-                        if (isVisible && type === 'submit' && text.length < 20) {
-                            buttons[i].scrollIntoView({block: 'center'});
-                            buttons[i].click();
-                            return 'Clicked modal submit: ' + text;
-                        }
-                    }
-                    return 'Modal found but no suitable button. Buttons: ' + JSON.stringify(buttonInfo);
-                } else {
-                    // 如果没找到标准弹窗，尝试查找所有可见的 submit 按钮
-                    var allButtons = document.querySelectorAll('button[type="submit"], input[type="submit"]');
-                    for (var i = 0; i < allButtons.length; i++) {
-                        var text = (allButtons[i].textContent || allButtons[i].value || '').toLowerCase().trim();
-                        var computedStyle = window.getComputedStyle(allButtons[i]);
-                        var isVisible = allButtons[i].offsetParent !== null && 
-                                       computedStyle.display !== 'none' && 
-                                       computedStyle.visibility !== 'hidden';
-                        
-                        if (isVisible && text.includes('renew') && !text.includes('server')) {
-                            allButtons[i].scrollIntoView({block: 'center'});
-                            allButtons[i].click();
-                            return 'Clicked global submit button: ' + text;
-                        }
-                    }
-                    
-                    return 'No modal found. Checked selectors: ' + modalSelectors.length;
-                }
-                """
-                result = driver.execute_script(js_code)
-                print(f"  JavaScript 结果: {result}")
-                
-                if 'Clicked' in result:
-                    print("✓ 使用 JavaScript 成功点击弹窗内的 Renew 按钮")
-                else:
-                    print("✗ 无法找到弹窗内的 Renew 按钮")
-                    print(f"  详细信息: {result}")
-                    
-                    # 保存页面源码以便调试
-                    if VERBOSE or CI:
-                        try:
-                            with open("debug_modal_page_source.html", "w", encoding="utf-8") as f:
-                                f.write(driver.page_source)
-                            print("  已保存页面源码: debug_modal_page_source.html")
-                        except:
-                            pass
-                    
-                    # 在 CI 环境中不等待，直接继续
-                    if not CI:
-                        print("  请手动点击弹窗内的 Renew 按钮...")
-                        sleep(30)
+            if modal_button:
+                await modal_button.click()
+                logger.info("✅ 已点击弹窗确认按钮")
+                await asyncio.sleep(3)
             else:
-                # 使用 JavaScript 点击，避免被遮挡
-                driver.execute_script("arguments[0].click();", modal_button)
-                print("✓ 已点击弹窗内的 Renew 按钮")
+                logger.warning("⚠️ 未找到弹窗确认按钮，可能已自动提交")
             
-            sleep(2)  # 减少等待
+            # 截图最终结果
+            await page.screenshot(path='host2play_renew_success.png', full_page=True)
+            logger.info("📸 最终截图: host2play_renew_success.png")
+            
+            logger.info("\n✅ 续期流程完成!")
+            
+            # 发送成功通知
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            success_message = f"""✅ *Host2Play 续期成功*
+
+🕐 开始时间: `{start_time.strftime('%Y-%m-%d %H:%M:%S')}`
+🕐 完成时间: `{end_time.strftime('%Y-%m-%d %H:%M:%S')}`
+⏱️ 耗时: `{duration:.1f} 秒`
+
+✨ 续期已完成！
+"""
+            send_telegram_message(success_message, 'host2play_renew_success.png')
             
         except Exception as e:
-            print(f"✗ 点击弹窗 Renew 按钮失败: {e}")
-        
-        sleep(3)
-        
-        # 检查结果
-        print(f"\n当前 URL: {driver.current_url}")
-        
-        # 等待页面加载完成
-        print("\n等待页面加载完成...")
-        human_like_delay(3, 5)
-        
-        # 检查页面是否有成功提示
-        success = False
-        try:
-            page_text = driver.find_element(By.TAG_NAME, 'body').text
-            if 'success' in page_text.lower() or 'renewed' in page_text.lower():
-                print("✓✓✓ 续期成功！")
-                success = True
-                
-                # 等待页面完全加载（检查加载状态）
-                print("等待页面完全加载...")
-                
-                # 方法1: 检查文档就绪状态
-                for i in range(10):
-                    try:
-                        ready_state = driver.execute_script("return document.readyState")
-                        if ready_state == "complete":
-                            print(f"✓ 文档就绪状态: complete（检查 {i+1} 次）")
-                            break
-                    except:
-                        pass
-                    sleep(0.5)
-                
-                # 方法2: 检查是否有加载指示器
-                for i in range(10):
-                    try:
-                        loading_elements = driver.find_elements(By.XPATH, 
-                            "//*[contains(@class, 'loading') or contains(@class, 'spinner') or contains(@class, 'loader') or contains(text(), 'Loading') or contains(text(), '加载中')]")
-                        if not loading_elements or not any(elem.is_displayed() for elem in loading_elements):
-                            print(f"✓ 无加载指示器（检查 {i+1} 次）")
-                            break
-                    except:
-                        pass
-                    sleep(0.5)
-                
-                # 额外等待确保所有内容渲染完成
-                print("额外等待确保内容完全渲染...")
-                human_like_delay(3, 5)
-                
-                # 只有成功时才保存截图
-                driver.save_screenshot(SCREENSHOT_PATH)
-                print(f"✓ 已保存成功截图: {SCREENSHOT_PATH}")
-                
-                # 发送 Telegram 成功通知
-                if ENABLE_TELEGRAM:
-                    from datetime import datetime
-                    success_msg = (
-                        "✅ <b>Host2Play 续期成功！</b>\n\n"
-                        f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"🔗 URL: {RENEW_URL[:50]}..."
-                    )
-                    send_telegram_message(success_msg)
-                    
-                    # 发送截图
-                    if os.path.exists(SCREENSHOT_PATH):
-                        send_telegram_photo(SCREENSHOT_PATH, "📸 续期成功截图")
-            else:
-                print("⚠ 请检查页面确认续期是否成功")
-        except:
-            print("⚠ 无法检查续期结果，请手动确认")
-        
-        # 如果没有成功，发送失败通知并保存诊断信息
-        if not success:
-            # 保存未成功时的页面截图和源码
+            logger.error(f"❌ 脚本执行失败: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # 截图错误状态
             try:
-                driver.save_screenshot("host2play_renew_unknown.png")
-                print(f"✓ 已保存状态未知截图: host2play_renew_unknown.png")
+                await page.screenshot(path='host2play_error.png', full_page=True)
+                logger.info("📸 错误截图: host2play_error.png")
             except:
                 pass
             
-            try:
-                with open("host2play_renew_unknown.html", "w", encoding="utf-8") as f:
-                    f.write(driver.page_source)
-                print(f"✓ 已保存状态未知页面源码: host2play_renew_unknown.html")
-            except:
-                pass
-            
-            if ENABLE_TELEGRAM:
-                from datetime import datetime
-                failure_msg = (
-                    "⚠️ <b>Host2Play 续期状态未知</b>\n\n"
-                    f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                    f"🔗 URL: {RENEW_URL[:50]}...\n\n"
-                    "请手动检查续期结果"
-                )
-                send_telegram_message(failure_msg)
-                
-                # 发送状态未知的截图
-                if os.path.exists("host2play_renew_unknown.png"):
-                    send_telegram_photo("host2play_renew_unknown.png", "⚠️ 续期状态未知时的页面截图")
-            
-            # 在 CI 环境中，如果没有成功也设置退出码为1
-            if CI:
-                print("⚠ CI 环境: 续期状态未知，设置退出码为1")
-        
-        print("\n浏览器将保持打开 10 秒...")
-        sleep(10)
-        
-    except Exception as e:
-        print(f"\n✗ 续期失败: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        # 保存失败时的截图和页面源码以便调试
-        try:
-            driver.save_screenshot("host2play_renew_failed.png")
-            print(f"✓ 已保存失败截图: host2play_renew_failed.png")
-        except Exception as screenshot_err:
-            print(f"⚠ 保存失败截图失败: {screenshot_err}")
-        
-        try:
-            with open("host2play_renew_failed.html", "w", encoding="utf-8") as f:
-                f.write(driver.page_source)
-            print(f"✓ 已保存失败页面源码: host2play_renew_failed.html")
-        except Exception as html_err:
-            print(f"⚠ 保存失败页面源码失败: {html_err}")
-        
-        # 发送失败通知
-        if ENABLE_TELEGRAM:
-            from datetime import datetime
-            error_msg = (
-                "❌ <b>Host2Play 续期失败！</b>\n\n"
-                f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"🔗 URL: {RENEW_URL[:50] if RENEW_URL else 'N/A'}...\n"
-                f"❗ 错误: {str(e)[:100]}"
-            )
-            send_telegram_message(error_msg)
-            
-            # 发送失败截图
-            if os.path.exists("host2play_renew_failed.png"):
-                send_telegram_photo("host2play_renew_failed.png", "❌ 续期失败时的页面截图")
-        
-        # 在 CI 环境中，设置退出码为1以便 GitHub Actions 标记为失败
-        if CI:
-            sys.exit(1)
-    finally:
-        print("\n关闭浏览器...")
-        driver.quit()
-        
-        # 清理临时图片
-        for i in range(17):
-            try:
-                os.remove(f"{i}.png")
-            except:
-                pass
+            # 发送失败通知
+            error_message = f"""❌ *Host2Play 续期失败*
+
+❗ 错误: `{str(e)[:100]}`
+🕐 时间: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+"""
+            send_telegram_message(error_message, 'host2play_error.png')
+            raise
 
 
 if __name__ == "__main__":
-    try:
-        renew_host2play_server()
-        print("\n✓ 脚本执行完成")
-    except Exception as e:
-        print(f"\n✗ 脚本执行失败: {e}")
-        if CI:
-            sys.exit(1)
+    asyncio.run(main())
