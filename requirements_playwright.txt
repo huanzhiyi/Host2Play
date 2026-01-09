@@ -8,7 +8,7 @@ playwright>=1.40.0
 camoufox[geoip]>=0.4.0
 
 # BrowserForge - 指纹伪装
-browserforge>=1.3.0
+browserforge>=1.2.1
 
 # HTTP 请求（Telegram 通知）
 requests>=2.31.0
