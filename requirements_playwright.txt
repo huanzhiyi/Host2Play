@@ -1,5 +1,5 @@
-# Host2Play 自动续期脚本依赖 - Playwright 版本
-# 极简依赖，无需 Selenium、YOLO、OpenCV 等重型库
+# Host2Play 自动续期脚本依赖 - Playwright + YOLO 版本
+# 包含 YOLO 图形识别能力
 
 # Playwright 浏览器自动化
 playwright>=1.40.0
@@ -12,3 +12,10 @@ browserforge>=1.2.1
 
 # HTTP 请求（Telegram 通知）
 requests>=2.31.0
+
+# YOLO 模型和图像处理（用于 reCAPTCHA 图形识别）
+ultralytics>=8.0.188
+opencv-python-headless>=4.5.0
+pillow>=9.0.0
+numpy>=1.21.0
+onnxruntime>=1.16.0
