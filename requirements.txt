@@ -2,6 +2,7 @@
 selenium>=4.12.0
 selenium-wire>=5.1.0
 undetected-chromedriver>=3.5.0
+blinker==1.7.0
 ultralytics>=8.0.188
 opencv-python-headless>=4.5.0
 pillow>=9.0.0
