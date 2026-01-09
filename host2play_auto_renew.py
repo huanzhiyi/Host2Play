@@ -142,13 +142,16 @@ def dynamic_and_selection_solver(target_num, verbose, model):
         
         image = Image.open("0.png")
         image = np.asarray(image)
-        result = model.predict(image, task="detect", verbose=False, conf=0.25)
+        # 使用默认参数，像参考项目一样
+        result = model.predict(image, task="detect", verbose=False)
         
         # 获取目标索引
         target_index = []
-        for i, num in enumerate(result[0].boxes.cls):
+        count = 0
+        for num in result[0].boxes.cls:
             if num == target_num:
-                target_index.append(i)
+                target_index.append(count)
+            count += 1
         
         if verbose and len(target_index) > 0:
             print(f"    检测到 {len(target_index)} 个目标物体")
@@ -196,13 +199,17 @@ def square_solver(target_num, verbose, model):
         
         image = Image.open("0.png")
         image = np.asarray(image)
-        result = model.predict(image, task="detect", verbose=False, conf=0.25)
+        # 使用默认参数，像参考项目一样
+        result = model.predict(image, task="detect", verbose=False)
         boxes = result[0].boxes.data
         
+        # 获取目标索引
         target_index = []
-        for i, num in enumerate(result[0].boxes.cls):
+        count = 0
+        for num in result[0].boxes.cls:
             if num == target_num:
-                target_index.append(i)
+                target_index.append(count)
+            count += 1
         
         if verbose and len(target_index) > 0:
             print(f"    检测到 {len(target_index)} 个目标物体")
@@ -246,6 +253,7 @@ def square_solver(target_num, verbose, model):
             for ans in answer:
                 answers.append(ans)
         
+        # 去重并排序，避免重复点击同一格
         return sorted(list(set(answers)))
     except Exception as e:
         if verbose: print(f"  ✗ 图片识别失败: {e}")
