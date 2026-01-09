@@ -720,61 +720,99 @@ def renew_host2play_server():
         # 查找并点击 "Renew" 按钮
         print("\n查找并点击 'Renew' 按钮...")
         driver.switch_to.default_content()
-        sleep(2)
+        sleep(3)
+        
+        # 先截图看看页面状态
+        if not HEADLESS or VERBOSE:
+            try:
+                driver.save_screenshot("debug_before_renew_button.png")
+                print("  已保存截图: debug_before_renew_button.png")
+            except:
+                pass
+        
+        # 先打印页面HTML以便调试
+        if VERBOSE:
+            print("\n  页面HTML片段:")
+            page_source = driver.page_source
+            if 'renew' in page_source.lower():
+                print("  ✓ 页面包含 'renew' 文本")
+            else:
+                print("  ✗ 页面不包含 'renew' 文本")
         
         try:
             # 尝试多种可能的选择器
             renew_button = None
             selectors = [
-                "//button[contains(text(), 'Renew server')]",
-                "//button[contains(text(), 'Renew')]",
-                "//a[contains(text(), 'Renew server')]",
-                "//a[contains(text(), 'Renew')]",
-                "//input[@value='Renew server']",
-                "//input[@value='Renew']",
+                "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'renew')]",
+                "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'renew')]",
+                "//input[contains(translate(@value, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'renew')]",
                 "//button[@type='submit']",
-                "//input[@type='submit']"
+                "//input[@type='submit']",
+                "//*[contains(@class, 'renew')]",
+                "//*[contains(@id, 'renew')]"
             ]
             
             for selector in selectors:
                 try:
-                    renew_button = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, selector)))
-                    print(f"✓ 找到 Renew 按钮: {selector}")
-                    break
-                except:
+                    elements = driver.find_elements(By.XPATH, selector)
+                    for elem in elements:
+                        if elem.is_displayed() and elem.is_enabled():
+                            renew_button = elem
+                            print(f"✓ 找到 Renew 按钮: {selector}")
+                            print(f"  按钮文本: {elem.text}")
+                            break
+                    if renew_button:
+                        break
+                except Exception as e:
+                    if VERBOSE:
+                        print(f"  选择器 {selector} 失败: {e}")
                     continue
             
             if renew_button is None:
-                print("⚠ 无法找到 'Renew' 按钮，尝试使用 JavaScript...")
+                print("⚠ 标准选择器未找到按钮，使用 JavaScript 全面搜索...")
                 # 尝试通过 JavaScript 查找并点击
                 js_code = """
-                var buttons = document.querySelectorAll('button, a, input[type="submit"]');
-                for (var i = 0; i < buttons.length; i++) {
-                    var text = buttons[i].textContent || buttons[i].value || '';
-                    if (text.toLowerCase().includes('renew')) {
-                        buttons[i].click();
-                        return 'Clicked: ' + text;
+                // 查找所有可能的按钮元素
+                var allElements = document.querySelectorAll('button, a, input[type="submit"], [onclick]');
+                var foundButtons = [];
+                
+                for (var i = 0; i < allElements.length; i++) {
+                    var elem = allElements[i];
+                    var text = (elem.textContent || elem.value || elem.getAttribute('title') || '').toLowerCase();
+                    var onclick = (elem.getAttribute('onclick') || '').toLowerCase();
+                    
+                    // 检查是否包含 renew 相关文本
+                    if (text.includes('renew') || onclick.includes('renew')) {
+                        foundButtons.push({
+                            tag: elem.tagName,
+                            text: text.substring(0, 50),
+                            onclick: onclick.substring(0, 50),
+                            visible: elem.offsetParent !== null
+                        });
+                        
+                        // 如果元素可见，尝试点击
+                        if (elem.offsetParent !== null) {
+                            elem.click();
+                            return 'Clicked: ' + text.substring(0, 50);
+                        }
                     }
                 }
-                return 'No button found';
+                
+                return 'Found ' + foundButtons.length + ' buttons: ' + JSON.stringify(foundButtons);
                 """
                 result = driver.execute_script(js_code)
                 print(f"  JavaScript 结果: {result}")
                 
-                if 'No button found' in result:
-                    print("\n✗ 无法找到 Renew 按钮")
-                    print("  尝试查找所有按钮...")
-                    buttons = driver.find_elements(By.TAG_NAME, 'button')
-                    for i, btn in enumerate(buttons):
-                        try:
-                            print(f"    按钮 {i+1}: {btn.text}")
-                        except:
-                            pass
-                    
-                    print("\n  请手动点击 Renew 按钮...")
-                    sleep(30)
+                if 'Clicked:' not in result:
+                    print("\n✗ 无法找到或点击 Renew 按钮")
+                    print("  脚本将退出，请检查续期 URL 是否正确")
+                    raise Exception("无法找到 Renew 按钮")
+                else:
+                    print("✓ JavaScript 成功点击按钮")
             else:
+                # 滚动到按钮位置
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", renew_button)
+                sleep(0.5)
                 # 使用 JavaScript 点击，避免被遮挡
                 driver.execute_script("arguments[0].click();", renew_button)
                 print("✓ 已点击 Renew 按钮")
@@ -880,17 +918,29 @@ def renew_host2play_server():
             
             if modal_button is None:
                 print("⚠ 标准选择器未找到弹窗按钮，使用 JavaScript 查找...")
+                
+                # 先截图调试
+                if not HEADLESS or VERBOSE:
+                    try:
+                        driver.save_screenshot("debug_before_modal_button.png")
+                        print("  已保存截图: debug_before_modal_button.png")
+                    except:
+                        pass
+                
                 # JavaScript 专门在弹窗内查找
                 js_code = """
                 // 查找弹窗容器
-                var modalSelectors = ['.modal', '.dialog', '.popup', '[role="dialog"]', '.swal2-container', '.swal-modal'];
+                var modalSelectors = ['.modal', '.dialog', '.popup', '[role="dialog"]', '.swal2-container', '.swal-modal', 
+                                      '.MuiDialog-root', '.ant-modal', '.el-dialog', '[class*="modal"]', '[class*="dialog"]'];
                 var modal = null;
+                var modalInfo = [];
                 
                 for (var i = 0; i < modalSelectors.length; i++) {
                     var modals = document.querySelectorAll(modalSelectors[i]);
                     for (var j = 0; j < modals.length; j++) {
                         if (modals[j].offsetParent !== null) {  // 可见的弹窗
                             modal = modals[j];
+                            modalInfo.push({selector: modalSelectors[i], visible: true});
                             break;
                         }
                     }
@@ -899,22 +949,32 @@ def renew_host2play_server():
                 
                 if (modal) {
                     // 在弹窗内查找按钮，排除 "Renew server"
-                    var buttons = modal.querySelectorAll('button, a, input[type="submit"]');
+                    var buttons = modal.querySelectorAll('button, a, input[type="submit"], [onclick]');
+                    var buttonInfo = [];
+                    
                     for (var i = 0; i < buttons.length; i++) {
-                        var text = (buttons[i].textContent || buttons[i].value || '').toLowerCase();
+                        var text = (buttons[i].textContent || buttons[i].value || '').toLowerCase().trim();
+                        var onclick = (buttons[i].getAttribute('onclick') || '').toLowerCase();
+                        
+                        buttonInfo.push({
+                            index: i,
+                            text: text.substring(0, 30),
+                            visible: buttons[i].offsetParent !== null
+                        });
+                        
                         // 只匹配 "renew" 但不包含 "server"
-                        if (text.includes('renew') && !text.includes('server')) {
+                        if (buttons[i].offsetParent !== null && text.includes('renew') && !text.includes('server')) {
                             buttons[i].click();
-                            return 'Clicked modal Renew: ' + buttons[i].textContent;
+                            return 'Clicked modal Renew: ' + text;
                         }
-                        if (text.includes('confirm') || text.includes('yes') || text.includes('ok')) {
+                        if (buttons[i].offsetParent !== null && (text.includes('confirm') || text.includes('yes') || text === 'ok')) {
                             buttons[i].click();
-                            return 'Clicked modal confirm: ' + buttons[i].textContent;
+                            return 'Clicked modal confirm: ' + text;
                         }
                     }
-                    return 'Modal found but no Renew button (buttons: ' + buttons.length + ')';
+                    return 'Modal found but no suitable button. Buttons: ' + JSON.stringify(buttonInfo);
                 } else {
-                    return 'No modal found';
+                    return 'No modal found. Checked selectors: ' + modalSelectors.length;
                 }
                 """
                 result = driver.execute_script(js_code)
@@ -924,8 +984,21 @@ def renew_host2play_server():
                     print("✓ 使用 JavaScript 成功点击弹窗内的 Renew 按钮")
                 else:
                     print("✗ 无法找到弹窗内的 Renew 按钮")
-                    print("  请手动点击弹窗内的 Renew 按钮...")
-                    sleep(30)
+                    print(f"  详细信息: {result}")
+                    
+                    # 保存页面源码以便调试
+                    if VERBOSE or CI:
+                        try:
+                            with open("debug_modal_page_source.html", "w", encoding="utf-8") as f:
+                                f.write(driver.page_source)
+                            print("  已保存页面源码: debug_modal_page_source.html")
+                        except:
+                            pass
+                    
+                    # 在 CI 环境中不等待，直接继续
+                    if not CI:
+                        print("  请手动点击弹窗内的 Renew 按钮...")
+                        sleep(30)
             else:
                 # 使用 JavaScript 点击，避免被遮挡
                 driver.execute_script("arguments[0].click();", modal_button)
