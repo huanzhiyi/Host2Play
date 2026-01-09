@@ -627,73 +627,27 @@ def renew_host2play_server():
     if ENABLE_TELEGRAM:
         send_telegram_message("🔄 <b>Host2Play 自动续期开始</b>\n\n正在启动浏览器...")
     
-    # 配置 Chrome 选项 - 增强反检测
+    # 配置 Chrome 选项 - 使用本地成功版本的简化配置
     chrome_options = webdriver.ChromeOptions()
-    
-    # 基础配置
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
-    chrome_options.add_argument('--disable-gpu')
-    chrome_options.add_argument('--window-size=1920,1080')
-    chrome_options.add_argument('--start-maximized')
-    
-    # 语言和地区设置
-    chrome_options.add_argument('--lang=en-US,en')
-    chrome_options.add_argument('--accept-lang=en-US,en;q=0.9')
-    
-    # SSL 相关
     chrome_options.add_argument('--ignore-certificate-errors')
     chrome_options.add_argument('--ignore-certificate-errors-spki-list')
     chrome_options.add_argument('--ignore-ssl-errors')
     chrome_options.add_argument('--allow-insecure-localhost')
-    
-    # 反检测核心设置
-    chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-    # Note: excludeSwitches may not be supported in all ChromeDriver versions
-    # chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    # chrome_options.add_experimental_option('useAutomationExtension', False)
-    
-    # User Agent - 使用真实的浏览器 UA
-    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-    
-    # 禁用一些可能暴露自动化的功能
-    chrome_options.add_argument('--disable-infobars')
-    chrome_options.add_argument('--disable-extensions')
-    chrome_options.add_argument('--disable-popup-blocking')
-    chrome_options.add_argument('--disable-notifications')
-    
-    # 隐私和安全设置
     chrome_options.add_argument('--disable-web-security')
-    chrome_options.add_argument('--disable-features=IsolateOrigins,site-per-process')
+    chrome_options.add_argument('--lang=en-US')
     
-    # 性能优化（CI 环境）
-    chrome_options.add_argument('--disable-background-networking')
-    chrome_options.add_argument('--disable-background-timer-throttling')
-    chrome_options.add_argument('--disable-backgrounding-occluded-windows')
-    chrome_options.add_argument('--disable-renderer-backgrounding')
-    
-    # Preferences - 进一步伪装
-    prefs = {
-        'profile.default_content_setting_values': {
-            'notifications': 2,
-            'geolocation': 2,
-        },
-        'credentials_enable_service': False,
-        'profile.password_manager_enabled': False,
-        'profile.managed_default_content_settings.images': 1,
-        'webrtc.ip_handling_policy': 'disable_non_proxied_udp',
-        'webrtc.multiple_routes_enabled': False,
-        'webrtc.nonproxied_udp_enabled': False
-    }
-    chrome_options.add_experimental_option('prefs', prefs)
+    # 核心反检测设置 - 仅保留兼容的选项
+    try:
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+    except:
+        pass
     
     # GitHub Actions 或 CI 环境需要的选项
     if HEADLESS or os.environ.get('CI'):
         chrome_options.add_argument('--headless=new')
-        # Headless 模式下的额外设置
-        chrome_options.add_argument('--disable-software-rasterizer')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        print("✓ 使用 headless 模式（已增强反检测）")
+        print("✓ 使用 headless 模式（简化配置）")
     
     seleniumwire_options = {
         'no_proxy': 'localhost,127.0.0.1',
@@ -718,68 +672,16 @@ def renew_host2play_server():
         driver.get(RENEW_URL)
         sleep(3)
         
-        # 页面加载后注入增强的反检测脚本
+        # 页面加载后注入反检测脚本
         try:
             driver.execute_script("""
-                // 移除 webdriver 属性
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-                
-                // 伪装 Chrome 对象
-                if (!window.chrome) {
-                    window.chrome = {};
-                }
-                if (!window.chrome.runtime) {
-                    window.chrome.runtime = {
-                        connect: function() {},
-                        sendMessage: function() {}
-                    };
-                }
-                
-                // 伪装 permissions
-                const originalQuery = window.navigator.permissions.query;
-                window.navigator.permissions.query = (parameters) => (
-                    parameters.name === 'notifications' ?
-                        Promise.resolve({ state: Notification.permission }) :
-                        originalQuery(parameters)
-                );
-                
-                // 伪装 plugins
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [1, 2, 3, 4, 5]
-                });
-                
-                // 伪装 languages
-                Object.defineProperty(navigator, 'languages', {
-                    get: () => ['en-US', 'en']
-                });
-                
-                // 移除自动化相关属性
-                delete navigator.__proto__.webdriver;
-                
-                // 覆盖 toString 方法以防检测
-                const originalToString = Function.prototype.toString;
-                Function.prototype.toString = function() {
-                    if (this === window.navigator.permissions.query) {
-                        return 'function query() { [native code] }';
-                    }
-                    return originalToString.call(this);
-                };
-                
-                // 伪装 window.outerWidth/outerHeight
-                if (window.outerWidth === 0) {
-                    Object.defineProperty(window, 'outerWidth', { get: () => 1920 });
-                }
-                if (window.outerHeight === 0) {
-                    Object.defineProperty(window, 'outerHeight', { get: () => 1080 });
-                }
-                
-                console.log('[Stealth] Anti-detection script injected successfully');
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                if (!window.chrome) { window.chrome = {}; }
+                if (!window.chrome.runtime) { window.chrome.runtime = {}; }
             """)
-            print("✓ 已注入增强反检测脚本")
-        except Exception as inject_err:
-            print(f"⚠ 注入反检测脚本失败: {inject_err}")
+            print("✓ 已注入反检测脚本")
+        except:
+            pass
         
         # 检测并处理 Cloudflare 挑战
         print("\n检测 Cloudflare 保护...")
