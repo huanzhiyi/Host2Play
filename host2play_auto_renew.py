@@ -26,6 +26,7 @@ VERBOSE = os.environ.get('VERBOSE', 'true').lower() == 'true'
 RENEW_URL = os.environ.get('RENEW_URL')  # 必须通过环境变量提供
 HEADLESS = os.environ.get('HEADLESS', 'false').lower() == 'true'  # GitHub Actions 需要 headless
 SCREENSHOT_PATH = os.environ.get('SCREENSHOT_PATH', 'host2play_renew_success.png')
+CI = os.environ.get('CI', 'false').lower() == 'true'  # 检测是否在 CI 环境（GitHub Actions）
 
 # Telegram 配置
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -720,7 +721,10 @@ def renew_host2play_server():
         # 查找并点击 "Renew" 按钮
         print("\n查找并点击 'Renew' 按钮...")
         driver.switch_to.default_content()
-        sleep(3)
+        
+        # 等待页面完全加载
+        print("  等待页面完全加载...")
+        sleep(5)
         
         # 先截图看看页面状态
         if not HEADLESS or VERBOSE:
@@ -738,6 +742,10 @@ def renew_host2play_server():
                 print("  ✓ 页面包含 'renew' 文本")
             else:
                 print("  ✗ 页面不包含 'renew' 文本")
+        
+        # 等待 JavaScript 执行完成
+        driver.execute_script("return document.readyState")
+        sleep(2)
         
         try:
             # 尝试多种可能的选择器
@@ -773,28 +781,48 @@ def renew_host2play_server():
                 # 尝试通过 JavaScript 查找并点击
                 js_code = """
                 // 查找所有可能的按钮元素
-                var allElements = document.querySelectorAll('button, a, input[type="submit"], [onclick]');
+                var allElements = document.querySelectorAll('button, a, input[type="submit"], [onclick], [role="button"]');
                 var foundButtons = [];
                 
                 for (var i = 0; i < allElements.length; i++) {
                     var elem = allElements[i];
-                    var text = (elem.textContent || elem.value || elem.getAttribute('title') || '').toLowerCase();
+                    var text = (elem.textContent || elem.value || elem.getAttribute('title') || elem.getAttribute('aria-label') || '').toLowerCase().trim();
                     var onclick = (elem.getAttribute('onclick') || '').toLowerCase();
+                    var classes = (elem.className || '').toLowerCase();
+                    var id = (elem.id || '').toLowerCase();
                     
-                    // 检查是否包含 renew 相关文本
-                    if (text.includes('renew') || onclick.includes('renew')) {
+                    // 检查是否包含 renew 相关文本或属性
+                    if (text.includes('renew') || onclick.includes('renew') || classes.includes('renew') || id.includes('renew')) {
+                        var computedStyle = window.getComputedStyle(elem);
+                        var isVisible = elem.offsetParent !== null && 
+                                       computedStyle.display !== 'none' && 
+                                       computedStyle.visibility !== 'hidden' &&
+                                       computedStyle.opacity !== '0';
+                        
                         foundButtons.push({
                             tag: elem.tagName,
                             text: text.substring(0, 50),
-                            onclick: onclick.substring(0, 50),
-                            visible: elem.offsetParent !== null
+                            classes: classes.substring(0, 50),
+                            id: id,
+                            visible: isVisible
                         });
                         
-                        // 如果元素可见，尝试点击
-                        if (elem.offsetParent !== null) {
+                        // 如果元素可见且包含 server（优先点击 "Renew server"）
+                        if (isVisible && text.includes('server')) {
+                            elem.scrollIntoView({block: 'center'});
                             elem.click();
                             return 'Clicked: ' + text.substring(0, 50);
                         }
+                    }
+                }
+                
+                // 如果没有找到 "Renew server"，点击任何可见的 renew 按钮
+                for (var i = 0; i < foundButtons.length; i++) {
+                    if (foundButtons[i].visible) {
+                        var elem = allElements[i];
+                        elem.scrollIntoView({block: 'center'});
+                        elem.click();
+                        return 'Clicked: ' + foundButtons[i].text;
                     }
                 }
                 
@@ -805,7 +833,18 @@ def renew_host2play_server():
                 
                 if 'Clicked:' not in result:
                     print("\n✗ 无法找到或点击 Renew 按钮")
-                    print("  脚本将退出，请检查续期 URL 是否正确")
+                    print(f"  详细信息: {result}")
+                    
+                    # 保存页面源码以便调试
+                    if VERBOSE or CI:
+                        try:
+                            with open("debug_renew_button_page_source.html", "w", encoding="utf-8") as f:
+                                f.write(driver.page_source)
+                            print("  已保存页面源码: debug_renew_button_page_source.html")
+                        except:
+                            pass
+                    
+                    print("  脚本将退出，请检查续期 URL 是否正确或页面是否需要登录")
                     raise Exception("无法找到 Renew 按钮")
                 else:
                     print("✓ JavaScript 成功点击按钮")
@@ -891,7 +930,10 @@ def renew_host2play_server():
         # 验证通过后，点击弹窗内的 Renew 按钮（不是页面上的 Renew server）
         print("\n查找并点击弹窗内的 'Renew' 按钮...")
         driver.switch_to.default_content()
-        sleep(1.5)  # 减少等待
+        
+        # 等待弹窗完全加载
+        print("  等待弹窗完全加载...")
+        sleep(3)
         
         try:
             # 专门查找弹窗内的 Renew 按钮，排除 Renew server
@@ -929,18 +971,34 @@ def renew_host2play_server():
                 
                 # JavaScript 专门在弹窗内查找
                 js_code = """
-                // 查找弹窗容器
-                var modalSelectors = ['.modal', '.dialog', '.popup', '[role="dialog"]', '.swal2-container', '.swal-modal', 
-                                      '.MuiDialog-root', '.ant-modal', '.el-dialog', '[class*="modal"]', '[class*="dialog"]'];
+                // 查找弹窗容器 - 更全面的选择器
+                var modalSelectors = [
+                    '.modal', '.dialog', '.popup', '[role="dialog"]', 
+                    '.swal2-container', '.swal-modal', '.swal2-popup',
+                    '.MuiDialog-root', '.ant-modal', '.el-dialog', 
+                    '[class*="modal"]', '[class*="dialog"]', '[class*="popup"]',
+                    '[id*="modal"]', '[id*="dialog"]'
+                ];
                 var modal = null;
                 var modalInfo = [];
                 
+                // 查找所有可能的弹窗
                 for (var i = 0; i < modalSelectors.length; i++) {
                     var modals = document.querySelectorAll(modalSelectors[i]);
                     for (var j = 0; j < modals.length; j++) {
-                        if (modals[j].offsetParent !== null) {  // 可见的弹窗
+                        var computedStyle = window.getComputedStyle(modals[j]);
+                        var isVisible = modals[j].offsetParent !== null && 
+                                       computedStyle.display !== 'none' && 
+                                       computedStyle.visibility !== 'hidden' &&
+                                       computedStyle.opacity !== '0';
+                        
+                        if (isVisible) {
                             modal = modals[j];
-                            modalInfo.push({selector: modalSelectors[i], visible: true});
+                            modalInfo.push({
+                                selector: modalSelectors[i], 
+                                visible: true,
+                                html: modals[j].innerHTML.substring(0, 100)
+                            });
                             break;
                         }
                     }
@@ -949,31 +1007,66 @@ def renew_host2play_server():
                 
                 if (modal) {
                     // 在弹窗内查找按钮，排除 "Renew server"
-                    var buttons = modal.querySelectorAll('button, a, input[type="submit"], [onclick]');
+                    var buttons = modal.querySelectorAll('button, a, input[type="submit"], [onclick], [role="button"]');
                     var buttonInfo = [];
                     
                     for (var i = 0; i < buttons.length; i++) {
-                        var text = (buttons[i].textContent || buttons[i].value || '').toLowerCase().trim();
+                        var text = (buttons[i].textContent || buttons[i].value || buttons[i].getAttribute('aria-label') || '').toLowerCase().trim();
                         var onclick = (buttons[i].getAttribute('onclick') || '').toLowerCase();
+                        var type = buttons[i].getAttribute('type') || '';
+                        
+                        var computedStyle = window.getComputedStyle(buttons[i]);
+                        var isVisible = buttons[i].offsetParent !== null && 
+                                       computedStyle.display !== 'none' && 
+                                       computedStyle.visibility !== 'hidden' &&
+                                       computedStyle.opacity !== '0';
                         
                         buttonInfo.push({
                             index: i,
                             text: text.substring(0, 30),
-                            visible: buttons[i].offsetParent !== null
+                            type: type,
+                            visible: isVisible
                         });
                         
                         // 只匹配 "renew" 但不包含 "server"
-                        if (buttons[i].offsetParent !== null && text.includes('renew') && !text.includes('server')) {
+                        if (isVisible && text.includes('renew') && !text.includes('server')) {
+                            buttons[i].scrollIntoView({block: 'center'});
                             buttons[i].click();
                             return 'Clicked modal Renew: ' + text;
                         }
-                        if (buttons[i].offsetParent !== null && (text.includes('confirm') || text.includes('yes') || text === 'ok')) {
+                        
+                        // 匹配 confirm 按钮
+                        if (isVisible && (text.includes('confirm') || text.includes('yes') || text === 'ok')) {
+                            buttons[i].scrollIntoView({block: 'center'});
                             buttons[i].click();
                             return 'Clicked modal confirm: ' + text;
+                        }
+                        
+                        // 匹配 submit 类型的按钮（通常是确认按钮）
+                        if (isVisible && type === 'submit' && text.length < 20) {
+                            buttons[i].scrollIntoView({block: 'center'});
+                            buttons[i].click();
+                            return 'Clicked modal submit: ' + text;
                         }
                     }
                     return 'Modal found but no suitable button. Buttons: ' + JSON.stringify(buttonInfo);
                 } else {
+                    // 如果没找到标准弹窗，尝试查找所有可见的 submit 按钮
+                    var allButtons = document.querySelectorAll('button[type="submit"], input[type="submit"]');
+                    for (var i = 0; i < allButtons.length; i++) {
+                        var text = (allButtons[i].textContent || allButtons[i].value || '').toLowerCase().trim();
+                        var computedStyle = window.getComputedStyle(allButtons[i]);
+                        var isVisible = allButtons[i].offsetParent !== null && 
+                                       computedStyle.display !== 'none' && 
+                                       computedStyle.visibility !== 'hidden';
+                        
+                        if (isVisible && text.includes('renew') && !text.includes('server')) {
+                            allButtons[i].scrollIntoView({block: 'center'});
+                            allButtons[i].click();
+                            return 'Clicked global submit button: ' + text;
+                        }
+                    }
+                    
                     return 'No modal found. Checked selectors: ' + modalSelectors.length;
                 }
                 """
