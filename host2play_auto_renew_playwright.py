@@ -31,9 +31,16 @@ from browserforge.fingerprints import Screen
 try:
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
-except ImportError:
+    logging.info("✅ YOLO 模块导入成功")
+except ImportError as e:
     YOLO_AVAILABLE = False
+    logging.error(f"❌ YOLO 导入失败: {e}")
     logging.warning("⚠️ YOLO 未安装，将跳过图形验证")
+except Exception as e:
+    YOLO_AVAILABLE = False
+    logging.error(f"❌ YOLO 导入异常: {e}")
+    import traceback
+    traceback.print_exc()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -317,6 +324,9 @@ async def find_and_click_turnstile(page: Page, retries: int = 20) -> bool:
 async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
     """使用 YOLO 模型处理 reCAPTCHA 图形验证 - 基于 Breaking-reCAPTCHAv2 项目改进"""
     logger.info("🔍 检查 reCAPTCHA...")
+    logger.info(f"📊 YOLO_AVAILABLE = {YOLO_AVAILABLE}")
+    logger.info(f"📊 MODEL_PATH = {MODEL_PATH}")
+    logger.info(f"📊 模型文件存在 = {os.path.exists(MODEL_PATH)}")
     
     # 检查 YOLO 是否可用
     if not YOLO_AVAILABLE:
@@ -340,10 +350,21 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
     # 检查模型文件
     if not os.path.exists(MODEL_PATH):
         logger.error(f"❌ 模型文件不存在: {MODEL_PATH}")
+        logger.error(f"   当前目录: {os.getcwd()}")
+        logger.error(f"   目录内容: {os.listdir('.')[:10]}")
         return False
     
     logger.info(f"✓ 加载 YOLO 模型: {MODEL_PATH}")
-    model = YOLO(MODEL_PATH, task="detect")
+    logger.info(f"✓ 模型文件大小: {os.path.getsize(MODEL_PATH) / (1024*1024):.2f} MB")
+    
+    try:
+        model = YOLO(MODEL_PATH, task="detect")
+        logger.info(f"✅ YOLO 模型加载成功")
+    except Exception as e:
+        logger.error(f"❌ YOLO 模型加载失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
     
     try:
         # 步骤 1: 查找并点击 checkbox
@@ -684,12 +705,56 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                 pass
 
 
+def check_yolo_status():
+    """检查 YOLO 状态并输出详细诊断信息"""
+    logger.info("\n" + "=" * 70)
+    logger.info("🔍 YOLO 环境检查")
+    logger.info("=" * 70)
+    
+    logger.info(f"1️⃣ YOLO_AVAILABLE = {YOLO_AVAILABLE}")
+    
+    if not YOLO_AVAILABLE:
+        logger.error("❌ YOLO 模块不可用 - 图形验证将被跳过！")
+        logger.error("   请检查 ultralytics 是否正确安装")
+        return False
+    
+    logger.info(f"2️⃣ 模型路径: {MODEL_PATH}")
+    logger.info(f"3️⃣ 当前工作目录: {os.getcwd()}")
+    
+    if not os.path.exists(MODEL_PATH):
+        logger.error(f"❌ 模型文件不存在: {MODEL_PATH}")
+        logger.error(f"   目录内容: {os.listdir('.')[:20]}")
+        return False
+    
+    file_size = os.path.getsize(MODEL_PATH)
+    logger.info(f"✅ 模型文件存在，大小: {file_size / (1024*1024):.2f} MB")
+    
+    # 尝试加载模型
+    try:
+        logger.info("4️⃣ 尝试加载 YOLO 模型...")
+        test_model = YOLO(MODEL_PATH, task="detect")
+        logger.info("✅ YOLO 模型加载成功！")
+        logger.info("=" * 70 + "\n")
+        return True
+    except Exception as e:
+        logger.error(f"❌ YOLO 模型加载失败: {e}")
+        import traceback
+        traceback.print_exc()
+        logger.info("=" * 70 + "\n")
+        return False
+
+
 async def main():
     """主函数"""
     # 验证环境变量
     if not RENEW_URL:
         logger.error("❌ 错误: RENEW_URL 环境变量未设置")
         return
+    
+    # 检查 YOLO 状态
+    yolo_ready = check_yolo_status()
+    if not yolo_ready:
+        logger.warning("⚠️ YOLO 未就绪，脚本将继续但可能无法通过图形验证")
     
     renew_url = RENEW_URL
     
