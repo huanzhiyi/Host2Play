@@ -47,10 +47,74 @@ logger = logging.getLogger(__name__)
 
 # 配置
 MODEL_PATH = "model.onnx"  # 模型文件在脚本同一目录
+MODEL_DOWNLOAD_URLS = [
+    # 从你的 fork 仓库下载 reCAPTCHA 专用模型
+    "https://media.githubusercontent.com/media/DannyLuna17/RecaptchaV2-IA-Solver/main/model.onnx",  # 推荐：直接从 LFS 存储
+    "https://github.com/DannyLuna17/RecaptchaV2-IA-Solver/raw/main/model.onnx",  # 备选：raw API（可能返回 LFS 指针）
+]
 RENEW_URL = os.environ.get('RENEW_URL')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 VERBOSE = True
+
+
+def download_yolo_model():
+    """下载 YOLO 模型文件（如果不存在）"""
+    # 如果模型文件已存在且大小正常，跳过下载
+    if os.path.exists(MODEL_PATH):
+        file_size = os.path.getsize(MODEL_PATH)
+        if file_size > 1000000:  # 大于 1MB，认为是有效文件
+            logger.info(f"✅ 模型文件已存在: {MODEL_PATH} ({file_size / (1024*1024):.2f} MB)")
+            return True
+        else:
+            logger.warning(f"⚠️ 模型文件大小异常 ({file_size} bytes)，将重新下载")
+            os.remove(MODEL_PATH)
+    
+    logger.info("📥 模型文件不存在，开始下载...")
+    
+    # 尝试多种下载方法
+    for i, url in enumerate(MODEL_DOWNLOAD_URLS, 1):
+        try:
+            logger.info(f"🔄 尝试方法 {i}/{len(MODEL_DOWNLOAD_URLS)}: {url[:80]}...")
+            
+            response = requests.get(url, stream=True, timeout=120)
+            response.raise_for_status()
+            
+            # 下载到临时文件
+            temp_path = MODEL_PATH + ".tmp"
+            with open(temp_path, 'wb') as f:
+                total_size = int(response.headers.get('content-length', 0))
+                downloaded = 0
+                
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # 每下载 10MB 显示一次进度
+                        if downloaded % (10 * 1024 * 1024) == 0:
+                            logger.info(f"   已下载: {downloaded / (1024*1024):.1f} MB")
+            
+            # 验证文件大小
+            file_size = os.path.getsize(temp_path)
+            if file_size < 1000000:
+                logger.warning(f"⚠️ 下载的文件大小异常 ({file_size} bytes)，可能是 LFS 指针文件")
+                os.remove(temp_path)
+                continue
+            
+            # 重命名为正式文件
+            os.rename(temp_path, MODEL_PATH)
+            logger.info(f"✅ 模型下载成功！文件大小: {file_size / (1024*1024):.2f} MB")
+            return True
+            
+        except Exception as e:
+            logger.warning(f"⚠️ 方法 {i} 失败: {e}")
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            continue
+    
+    logger.error("❌ 所有下载方法均失败！")
+    return False
 
 
 def send_telegram_message(message: str, photo_path: str = None) -> bool:
@@ -347,12 +411,12 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                     pass
         return False
     
-    # 检查模型文件
+    # 检查并下载模型文件
     if not os.path.exists(MODEL_PATH):
-        logger.error(f"❌ 模型文件不存在: {MODEL_PATH}")
-        logger.error(f"   当前目录: {os.getcwd()}")
-        logger.error(f"   目录内容: {os.listdir('.')[:10]}")
-        return False
+        logger.warning(f"⚠️ 模型文件不存在，尝试下载: {MODEL_PATH}")
+        if not download_yolo_model():
+            logger.error(f"❌ 模型文件下载失败")
+            return False
     
     logger.info(f"✓ 加载 YOLO 模型: {MODEL_PATH}")
     logger.info(f"✓ 模型文件大小: {os.path.getsize(MODEL_PATH) / (1024*1024):.2f} MB")
@@ -721,17 +785,18 @@ def check_yolo_status():
     logger.info(f"2️⃣ 模型路径: {MODEL_PATH}")
     logger.info(f"3️⃣ 当前工作目录: {os.getcwd()}")
     
-    if not os.path.exists(MODEL_PATH):
-        logger.error(f"❌ 模型文件不存在: {MODEL_PATH}")
-        logger.error(f"   目录内容: {os.listdir('.')[:20]}")
+    # 下载模型文件（如果不存在）
+    logger.info("4️⃣ 检查并下载模型文件...")
+    if not download_yolo_model():
+        logger.error("❌ 模型文件下载失败")
         return False
     
     file_size = os.path.getsize(MODEL_PATH)
-    logger.info(f"✅ 模型文件存在，大小: {file_size / (1024*1024):.2f} MB")
+    logger.info(f"✅ 模型文件就绪，大小: {file_size / (1024*1024):.2f} MB")
     
     # 尝试加载模型
     try:
-        logger.info("4️⃣ 尝试加载 YOLO 模型...")
+        logger.info("5️⃣ 尝试加载 YOLO 模型...")
         test_model = YOLO(MODEL_PATH, task="detect")
         logger.info("✅ YOLO 模型加载成功！")
         logger.info("=" * 70 + "\n")
