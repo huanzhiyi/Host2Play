@@ -44,6 +44,14 @@ except Exception as e:
     print(f"❌ Selenium import failed: {e}")
     raise
 
+# SeleniumBase (用于 CloudflareBypasser 思路：uc=True + 自动点击 challenge)
+try:
+    from seleniumbase import Driver as SBDriver
+    SELENIUMBASE_AVAILABLE = True
+except Exception:
+    SBDriver = None
+    SELENIUMBASE_AVAILABLE = False
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(levelname)s %(message)s'
@@ -157,6 +165,102 @@ def wait_cloudflare(driver, timeout_sec: int = 60) -> bool:
             last_shot = time.time()
         time.sleep(2)
     return not is_cloudflare_challenge(driver)
+
+
+def get_cf_clearance_with_seleniumbase(url: str, timeout_sec: int = 90) -> Optional[dict]:
+    """使用 seleniumbase(uc=True) 尝试通过 Cloudflare challenge，获取 cf_clearance cookie。"""
+    if not SELENIUMBASE_AVAILABLE:
+        logger.warning('seleniumbase not available; skip cf_clearance pre-bypass')
+        return None
+
+    start = time.time()
+    sb = None
+    try:
+        logger.info('🛡️ [CF] starting seleniumbase Driver(uc=True) to obtain cf_clearance...')
+        sb = SBDriver(uc=True, headless=False)  # 配合 xvfb-run
+        # seleniumbase 提供更稳的 open+reconnect
+        try:
+            sb.uc_open_with_reconnect(url, 10)
+        except Exception:
+            sb.get(url)
+
+        attempt = 0
+        last_shot = 0.0
+        while time.time() - start < timeout_sec:
+            attempt += 1
+
+            # 周期性截图（每 5 秒一张），便于观察 challenge 是否可点/是否变化
+            if time.time() - last_shot > 5:
+                try:
+                    shot = f'cf_bypass_attempt_{attempt:03d}.png'
+                    sb.save_screenshot(shot)
+                    logger.info(f'📸 [CF] saved {shot} (title={sb.title})')
+                except Exception:
+                    pass
+                last_shot = time.time()
+
+            # 尝试自动点击 "Verify you are human" / turnstile
+            try:
+                sb.uc_gui_click_captcha()
+                logger.info(f'🖱️ [CF] uc_gui_click_captcha() called (attempt {attempt})')
+            except Exception as e:
+                logger.info(f'🖱️ [CF] uc_gui_click_captcha() error: {e}')
+
+            # 检查是否拿到 cf_clearance
+            try:
+                cookies = sb.get_cookies()
+                for c in cookies:
+                    if c.get('name') == 'cf_clearance':
+                        logger.info('✅ [CF] cf_clearance obtained')
+                        try:
+                            sb.save_screenshot('cf_bypass_success.png')
+                        except Exception:
+                            pass
+                        return c
+            except Exception:
+                pass
+
+            time.sleep(2)
+
+        logger.warning('❌ [CF] failed to obtain cf_clearance within timeout')
+        try:
+            sb.save_screenshot('host2play_error_cloudflare.png')
+        except Exception:
+            pass
+        return None
+
+    finally:
+        try:
+            if sb:
+                sb.quit()
+        except Exception:
+            pass
+
+
+def apply_cf_clearance_cookie(driver, url: str, cf_cookie: dict) -> None:
+    """将 cf_clearance 注入到主 driver 中。"""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    domain = parsed.netloc
+    # 先访问域名以便设置 cookie
+    driver.get(f"https://{domain}")
+    time.sleep(1)
+    driver.delete_all_cookies()
+
+    cookie = {
+        'name': cf_cookie.get('name', 'cf_clearance'),
+        'value': cf_cookie.get('value'),
+        'domain': cf_cookie.get('domain') or domain,
+        'path': cf_cookie.get('path') or '/',
+        'secure': bool(cf_cookie.get('secure', True)),
+    }
+    # expiry 可选
+    if cf_cookie.get('expiry'):
+        cookie['expiry'] = int(cf_cookie['expiry'])
+
+    driver.add_cookie(cookie)
+    logger.info('✅ [CF] cf_clearance injected into main driver')
 
 
 def get_all_captcha_img_urls(driver) -> List[str]:
@@ -549,17 +653,31 @@ def main() -> int:
         driver.scopes = ['.*google.com/recaptcha.*']
 
         logger.info('🌐 opening renew url...')
+
+        # 1) 先尝试用 SeleniumBase(uc=True) 获取 cf_clearance
+        cf_cookie = get_cf_clearance_with_seleniumbase(RENEW_URL, timeout_sec=120)
+        if cf_cookie:
+            # 2) 注入 cf_clearance 后再访问目标页
+            apply_cf_clearance_cookie(driver, RENEW_URL, cf_cookie)
+        else:
+            logger.warning('⚠️ [CF] no cf_clearance obtained; will try direct open + wait')
+
         driver.get(RENEW_URL)
         time.sleep(3)
 
-        # Cloudflare wait
+        # Cloudflare wait (兜底)
         if is_cloudflare_challenge(driver):
             logger.info('⏳ Cloudflare challenge detected, waiting...')
-            ok = wait_cloudflare(driver, timeout_sec=90)
+            ok = wait_cloudflare(driver, timeout_sec=120)
             if not ok:
                 save_screenshot(driver, 'host2play_error_cloudflare.png')
                 raise RuntimeError('Cloudflare challenge not passed')
             logger.info('✅ Cloudflare seems passed')
+
+        # 如果仍然是 challenge，直接失败，避免后续假流程
+        if is_cloudflare_challenge(driver):
+            save_screenshot(driver, 'host2play_error_cloudflare.png')
+            raise RuntimeError('Cloudflare challenge still present after bypass+wait')
 
         # inject anti webdriver
         try:
