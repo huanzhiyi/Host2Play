@@ -60,10 +60,11 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # CI Selenium 版本：需要 seleniumwire.undetected_chromedriver
-          pip install --default-timeout=300 --retries 3 selenium selenium-wire undetected-chromedriver requests --no-cache-dir
-          pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime==1.20.0 --no-cache-dir
-          python -c "import seleniumwire; import seleniumwire.undetected_chromedriver as wd; print('seleniumwire+uc ok')"
+          # 按 requirements.txt 安装，避免依赖漂移
+          pip install --default-timeout=300 --retries 3 -r requirements.txt --no-cache-dir
+          # 强制修复 selenium-wire 兼容：blinker 新版本移除了 blinker._saferef
+          pip install --default-timeout=300 --retries 3 --upgrade --force-reinstall blinker==1.7.0 --no-cache-dir
+          python -c "import blinker; import seleniumwire; import seleniumwire.undetected_chromedriver as wd; print('deps ok', blinker.__version__)"
       
       - name: Install Chromium
         run: |
