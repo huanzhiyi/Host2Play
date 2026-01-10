@@ -1,0 +1,21 @@
+# Core dependencies for host2play auto renew with Turnstile solver
+selenium>=4.15.0
+selenium-wire>=5.1.0
+undetected-chromedriver>=3.5.4
+
+# Turnstile solver
+turnstile-solver>=0.1.0
+
+# Image processing for reCAPTCHA solving
+opencv-python>=4.8.0
+pillow>=10.0.0
+numpy>=1.24.0
+
+# YOLO for reCAPTCHA object detection
+ultralytics>=8.0.0
+
+# HTTP requests
+requests>=2.31.0
+
+# PyAutoGUI (optional, for GUI mode Turnstile solving)
+pyautogui>=0.9.54
