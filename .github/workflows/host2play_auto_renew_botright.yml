@@ -40,8 +40,10 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          # 安装 ffmpeg（音频处理）
+          # 安装 ffmpeg（音频处理）和其他依赖
           sudo apt-get install -y ffmpeg libavcodec-extra
+          # Ubuntu 24.04: 安装 Playwright 可能需要的依赖
+          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2
           # 验证 ffmpeg 安装
           ffmpeg -version
       
@@ -77,7 +79,9 @@ jobs:
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
-          playwright install chromium --with-deps
+          # Ubuntu 24.04 兼容性修复
+          playwright install chromium
+          playwright install-deps chromium
 
       - name: Install Playwright dependencies only
         if: steps.playwright-cache.outputs.cache-hit == 'true'
