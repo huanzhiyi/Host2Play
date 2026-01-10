@@ -1,0 +1,20 @@
+# Host2Play 自动续期脚本依赖 (Audio Solver 版本)
+
+# Playwright 浏览器自动化
+playwright>=1.48.0
+camoufox>=0.4.0
+browserforge>=1.2.0
+
+# 音频处理和语音识别
+SpeechRecognition>=3.10.4
+pydub>=0.25.1
+aiohttp>=3.10.0
+
+# HTTP 请求（Telegram 通知）
+requests>=2.31.0
+
+# 系统依赖说明:
+# - ffmpeg 或 libav (用于音频处理)
+# Ubuntu/Debian: sudo apt-get install ffmpeg
+# macOS: brew install ffmpeg
+# Windows: 下载 ffmpeg 并添加到 PATH
