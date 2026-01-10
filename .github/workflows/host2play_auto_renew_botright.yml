@@ -69,15 +69,14 @@ jobs:
         run: |
           playwright install-deps chromium
       
-      - name: Run auto renew script (Botright)
+      - name: Run auto renew script (Botright Simple)
         env:
           RENEW_URL: ${{ secrets.RENEW_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY }}
           CI: 'true'
         run: |
-          python host2play_auto_renew_botright.py
+          python host2play_auto_renew_botright_simple.py
       
       - name: Upload success screenshot
         if: success()
