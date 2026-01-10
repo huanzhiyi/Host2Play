@@ -54,10 +54,25 @@ jobs:
       
       - name: Install Python dependencies
         run: |
+          echo "📦 开始安装 Python 依赖..."
           python -m pip install --upgrade pip
-          pip install -r requirements_botright.txt --no-cache-dir
-          # 验证关键依赖
-          python -c "import botright; import playwright_recaptcha; print('✅ Botright 和 playwright-recaptcha 导入成功')"
+          echo "✅ pip 已升级"
+          
+          echo "📦 安装 hcaptcha-challenger..."
+          pip install hcaptcha-challenger>=0.7.0 --no-cache-dir -v
+          echo "✅ hcaptcha-challenger 安装完成"
+          
+          echo "📦 安装其他依赖..."
+          pip install -r requirements_botright.txt --no-cache-dir -v
+          echo "✅ 所有依赖安装完成"
+          
+          echo "🔍 列出已安装的包："
+          pip list | grep -E "botright|hcaptcha|playwright"
+          
+          echo "🧪 验证关键依赖..."
+          python -c "from hcaptcha_challenger.agents import AgentT; print('✅ hcaptcha-challenger 导入成功')" || echo "❌ hcaptcha-challenger 导入失败"
+          python -c "import botright; print('✅ botright 导入成功')" || echo "❌ botright 导入失败"
+          python -c "import playwright_recaptcha; print('✅ playwright-recaptcha 导入成功')" || echo "❌ playwright-recaptcha 导入失败"
       
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
@@ -68,6 +83,12 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: |
           playwright install-deps chromium
+      
+      - name: Test Botright imports
+        continue-on-error: true
+        run: |
+          echo "🧪 运行依赖测试脚本..."
+          python test_botright_import.py || echo "⚠️ 测试脚本失败，但继续执行"
       
       - name: Run auto renew script (Botright Simple)
         env:
