@@ -60,19 +60,19 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # 分步安装以节省空间，增加超时时间和重试
-          pip install --default-timeout=300 --retries 3 playwright camoufox browserforge requests --no-cache-dir
-          pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime==1.23.2 --no-cache-dir
+          # CI Selenium 版本：需要 seleniumwire.undetected_chromedriver
+          pip install --default-timeout=300 --retries 3 selenium selenium-wire undetected-chromedriver requests --no-cache-dir
+          pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime==1.20.0 --no-cache-dir
+          python -c "import seleniumwire; import seleniumwire.undetected_chromedriver as wd; print('seleniumwire+uc ok')"
       
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      - name: Install Chromium
         run: |
-          playwright install chromium --with-deps
-      
-      - name: Install Playwright dependencies only
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+
+      - name: Install Xvfb (optional)
         run: |
-          playwright install-deps chromium
+          sudo apt-get install -y xvfb || true
       
       - name: Download YOLO model
         if: steps.yolo-model-cache.outputs.cache-hit != 'true'
@@ -166,7 +166,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CI: 'true'
         run: |
-          python host2play_auto_renew.py
+          python host2play_auto_renew_ci_selenium.py
       
       - name: Upload success screenshot
         if: success()
@@ -185,6 +185,29 @@ jobs:
           path: |
             host2play_error*.png
             host2play_*.png
+            host2play_cloudflare_wait.png
+            host2play_error_cloudflare.png
+            host2play_error_recaptcha_page.png
+            host2play_error_recaptcha_modal.png
+            host2play_error_no_renew_button.png
+            failed_square_*.png
+            0.png
+            1.png
+            2.png
+            3.png
+            4.png
+            5.png
+            6.png
+            7.png
+            8.png
+            9.png
+            10.png
+            11.png
+            12.png
+            13.png
+            14.png
+            15.png
+            16.png
           retention-days: 7
           if-no-files-found: ignore
       
