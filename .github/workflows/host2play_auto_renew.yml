@@ -60,23 +60,21 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # 按 requirements.txt 安装，避免依赖漂移
-          pip install --default-timeout=300 --retries 3 -r requirements.txt --no-cache-dir
-          # CloudflareBypasser 方案依赖 seleniumbase
-          pip install --default-timeout=300 --retries 3 seleniumbase --no-cache-dir
-          # 强制修复 selenium-wire 兼容：blinker 新版本移除了 blinker._saferef
-          pip install --default-timeout=300 --retries 3 --upgrade --force-reinstall blinker==1.7.0 --no-cache-dir
-          python -c "import blinker; import seleniumbase; import seleniumwire; import seleniumwire.undetected_chromedriver as wd; print('deps ok', blinker.__version__)"
+          # Playwright + Camoufox（可过 Cloudflare）
+          pip install --default-timeout=300 --retries 3 playwright camoufox browserforge requests --no-cache-dir
+          # YOLO 推理依赖（固定 onnxruntime 版本避免兼容性问题）
+          pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime==1.20.0 --no-cache-dir
+          python -c "import camoufox; import browserforge; import ultralytics; import onnxruntime; print('deps ok')"
       
-      - name: Install Chromium
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser
+          playwright install chromium --with-deps
 
-      - name: Install Xvfb
+      - name: Install Playwright dependencies only
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
+          playwright install-deps chromium
       
       - name: Download YOLO model
         if: steps.yolo-model-cache.outputs.cache-hit != 'true'
@@ -169,9 +167,8 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CI: 'true'
-          HEADLESS: 'false'
         run: |
-          xvfb-run -a python host2play_auto_renew_ci_selenium.py
+          python host2play_auto_renew.py
       
       - name: Upload success screenshot
         if: success()
@@ -179,6 +176,20 @@ jobs:
         with:
           name: renew-success-${{ github.run_number }}
           path: host2play_renew_success.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renew-debug-${{ github.run_number }}
+          path: |
+            0.png
+            failed_square_*.png
+            host2play_cloudflare_wait.png
+            host2play_error*.png
+            host2play_*.png
           retention-days: 7
           if-no-files-found: ignore
       
@@ -196,8 +207,6 @@ jobs:
             host2play_error_recaptcha_modal.png
             host2play_error_no_renew_button.png
             failed_square_*.png
-            cf_bypass_attempt_*.png
-            cf_bypass_success.png
             0.png
             1.png
             2.png
