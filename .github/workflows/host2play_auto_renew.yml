@@ -28,6 +28,8 @@ jobs:
       
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          lfs: true  # 启用 Git LFS 支持
       
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -48,6 +50,13 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-chromium
       
+      - name: Cache YOLO model
+        uses: actions/cache@v3
+        id: yolo-model-cache
+        with:
+          path: model.onnx
+          key: yolo-model-onnx-v1
+      
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -65,19 +74,71 @@ jobs:
         run: |
           playwright install-deps chromium
       
-      - name: Check YOLO model
+      - name: Download YOLO model
+        if: steps.yolo-model-cache.outputs.cache-hit != 'true'
         run: |
-          if [ ! -f model.onnx ]; then
-            echo "⚠️ model.onnx 文件不存在，尝试下载..."
-            curl -L -o model.onnx https://github.com/daijro/RecaptchaV2-IA-Solver/raw/main/model.onnx || echo "❌ 模型下载失败，将跳过 YOLO 识别"
-          else
-            echo "✅ model.onnx 文件已存在"
-          fi
+          echo "🔍 缓存未命中，需要下载 model.onnx..."
           
-          # 检查文件大小
+          # 删除可能存在的 LFS 指针文件
+          rm -f model.onnx
+          
+          echo "📥 从外部源下载 YOLO 模型..."
+          
+          # 尝试从 GitHub 下载（使用 media 链接绕过 LFS）
+          echo "🔄 尝试方法 1: GitHub LFS media 链接..."
+          curl -L -o model.onnx "https://media.githubusercontent.com/media/daijro/RecaptchaV2-IA-Solver/main/model.onnx" && {
+            FILE_SIZE=$(stat -c%s model.onnx)
+            if [ $FILE_SIZE -gt 1000000 ]; then
+              echo "✅ 下载成功！文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
+              exit 0
+            fi
+          }
+          
+          echo "⚠️ 方法 1 失败，尝试方法 2: 直接 GitHub API..."
+          rm -f model.onnx
+          curl -L -o model.onnx "https://github.com/daijro/RecaptchaV2-IA-Solver/raw/main/model.onnx" && {
+            FILE_SIZE=$(stat -c%s model.onnx)
+            if [ $FILE_SIZE -gt 1000000 ]; then
+              echo "✅ 下载成功！文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
+              exit 0
+            fi
+          }
+          
+          echo "⚠️ 方法 2 失败，尝试方法 3: Git LFS pull..."
+          rm -f model.onnx
+          git lfs install
+          git lfs pull --include="model.onnx" && {
+            if [ -f model.onnx ]; then
+              FILE_SIZE=$(stat -c%s model.onnx)
+              if [ $FILE_SIZE -gt 1000000 ]; then
+                echo "✅ Git LFS 拉取成功！文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
+                exit 0
+              fi
+            fi
+          }
+          
+          echo "❌ 所有下载方法均失败，YOLO 检测将不可用"
+          ls -lh model.onnx 2>/dev/null || echo "文件不存在"
+      
+      - name: Verify YOLO model
+        run: |
+          echo "🔍 验证 model.onnx 文件..."
+          
           if [ -f model.onnx ]; then
-            ls -lh model.onnx
-            echo "✅ 模型文件大小: $(du -h model.onnx | cut -f1)"
+            FILE_SIZE=$(stat -c%s model.onnx)
+            echo "📦 文件大小: $FILE_SIZE bytes ($(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB)"
+            
+            if [ $FILE_SIZE -lt 1000000 ]; then
+              echo "❌ 错误: 文件大小异常，可能是 LFS 指针文件"
+              echo "📄 文件内容:"
+              head -n 3 model.onnx
+              exit 1
+            else
+              echo "✅ 模型文件验证通过"
+            fi
+          else
+            echo "❌ 错误: model.onnx 文件不存在"
+            exit 1
           fi
       
       - name: Test YOLO import
