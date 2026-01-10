@@ -243,18 +243,8 @@ def dynamic_and_selection_solver(target_num, verbose, model):
         return []
 
 
-def get_occupied_cells(vertices):
-    """获取被占用的单元格（4x4）"""
-    occupied_cells = set()
-    rows, cols = zip(*[((v-1)//4, (v-1) % 4) for v in vertices])
-    for i in range(min(rows), max(rows)+1):
-        for j in range(min(cols), max(cols)+1):
-            occupied_cells.add(4*i + j + 1)
-    return sorted(list(occupied_cells))
-
-
 def square_solver(target_num, verbose, model):
-    """解决 4x4 方格验证"""
+    """解决 4x4 方格验证 - 只选择物体中心点所在的方格"""
     try:
         if not os.path.exists("0.png"):
             return []
@@ -273,37 +263,32 @@ def square_solver(target_num, verbose, model):
             logger.info(f"    检测到 {len(target_index)} 个目标物体")
         
         answers = []
+        # 4x4 方格，每格 112.5 x 112.5 像素
+        cell_size = 112.5
+        
         for i in target_index:
             target_box = boxes[i]
-            x1, y1 = int(target_box[0]), int(target_box[1])
-            x4, y4 = int(target_box[2]), int(target_box[3])
-            x2, y2 = x4, y1
-            x3, y3 = x1, y4
-            xys = [x1, y1, x2, y2, x3, y3, x4, y4]
+            x1, y1 = float(target_box[0]), float(target_box[1])
+            x2, y2 = float(target_box[2]), float(target_box[3])
             
-            four_cells = []
-            for j in range(4):
-                x, y = xys[j*2], xys[j*2+1]
-                
-                if x < 112.5 and y < 112.5: four_cells.append(1)
-                elif 112.5 < x < 225 and y < 112.5: four_cells.append(2)
-                elif 225 < x < 337.5 and y < 112.5: four_cells.append(3)
-                elif 337.5 < x <= 450 and y < 112.5: four_cells.append(4)
-                elif x < 112.5 and 112.5 < y < 225: four_cells.append(5)
-                elif 112.5 < x < 225 and 112.5 < y < 225: four_cells.append(6)
-                elif 225 < x < 337.5 and 112.5 < y < 225: four_cells.append(7)
-                elif 337.5 < x <= 450 and 112.5 < y < 225: four_cells.append(8)
-                elif x < 112.5 and 225 < y < 337.5: four_cells.append(9)
-                elif 112.5 < x < 225 and 225 < y < 337.5: four_cells.append(10)
-                elif 225 < x < 337.5 and 225 < y < 337.5: four_cells.append(11)
-                elif 337.5 < x <= 450 and 225 < y < 337.5: four_cells.append(12)
-                elif x < 112.5 and 337.5 < y <= 450: four_cells.append(13)
-                elif 112.5 < x < 225 and 337.5 < y <= 450: four_cells.append(14)
-                elif 225 < x < 337.5 and 337.5 < y <= 450: four_cells.append(15)
-                elif 337.5 < x <= 450 and 337.5 < y <= 450: four_cells.append(16)
+            # 计算边界框的中心点
+            center_x = (x1 + x2) / 2
+            center_y = (y1 + y2) / 2
             
-            for ans in get_occupied_cells(four_cells):
-                answers.append(ans)
+            # 根据中心点确定所在的方格（1-16）
+            col = int(center_x // cell_size)  # 列 (0-3)
+            row = int(center_y // cell_size)  # 行 (0-3)
+            
+            # 确保在有效范围内
+            col = max(0, min(3, col))
+            row = max(0, min(3, row))
+            
+            # 计算方格编号（从1开始）
+            cell_num = row * 4 + col + 1
+            answers.append(cell_num)
+            
+            if verbose:
+                logger.info(f"      物体 {i+1}: 中心点({center_x:.1f}, {center_y:.1f}) -> 方格 {cell_num}")
         
         return sorted(list(set(answers)))
     except Exception as e:
