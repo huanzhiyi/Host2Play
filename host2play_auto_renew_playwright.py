@@ -270,6 +270,7 @@ def square_solver(target_num, verbose, model):
             target_box = boxes[i]
             x1, y1 = float(target_box[0]), float(target_box[1])
             x2, y2 = float(target_box[2]), float(target_box[3])
+            confidence = float(target_box[4]) if len(target_box) > 4 else 0
             
             # 计算边界框的中心点
             center_x = (x1 + x2) / 2
@@ -288,7 +289,7 @@ def square_solver(target_num, verbose, model):
             answers.append(cell_num)
             
             if verbose:
-                logger.info(f"      物体 {i+1}: 中心点({center_x:.1f}, {center_y:.1f}) -> 方格 {cell_num}")
+                logger.info(f"      物体 {i+1}: bbox({x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}) 置信度:{confidence:.2f} 中心({center_x:.1f},{center_y:.1f}) -> 方格 {cell_num}")
         
         return sorted(list(set(answers)))
     except Exception as e:
