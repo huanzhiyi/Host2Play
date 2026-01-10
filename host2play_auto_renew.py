@@ -617,19 +617,23 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                     # 动态验证：点击并等待新图片
                     logger.info("  开始动态验证流程...")
                     
-                    cells = await challenge_frame.query_selector_all('#rc-imageselect-target td')
+                    # 等待第一个方格可点击（确保 DOM 准备好）
+                    await challenge_frame.wait_for_selector('#rc-imageselect-target td:first-child', state='visible', timeout=10000)
+                    
                     for answer in answers:
-                        if answer <= len(cells):
-                            cell = cells[answer - 1]
-                            try:
-                                # 尝试正常点击
-                                await cell.scroll_into_view_if_needed()
-                                await asyncio.sleep(0.3)
-                                await cell.click(force=True, timeout=5000)
-                            except:
-                                # 备选：使用 JavaScript 点击
+                        # 使用 XPath 直接定位第 N 个方格，类似 Selenium
+                        cell_selector = f'#rc-imageselect-target td:nth-child({answer})'
+                        try:
+                            # 等待元素可见并点击
+                            await challenge_frame.wait_for_selector(cell_selector, state='visible', timeout=10000)
+                            cell = await challenge_frame.query_selector(cell_selector)
+                            await cell.click(force=True, timeout=5000)
+                        except:
+                            # 备选：使用 JavaScript 点击
+                            cell = await challenge_frame.query_selector(cell_selector)
+                            if cell:
                                 await cell.evaluate('el => el.click()')
-                            random_delay(mu=0.5, sigma=0.2)
+                        random_delay(mu=0.6, sigma=0.3)  # 和本地版本一样的延迟
                     
                     # 持续处理新图片
                     dynamic_rounds = 0
@@ -704,17 +708,17 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                         
                         if len(answers) >= 1:
                             logger.info(f"    [轮次 {dynamic_rounds}] 检测到 {len(answers)} 个新目标")
-                            cells = await challenge_frame.query_selector_all('#rc-imageselect-target td')
                             for answer in answers:
-                                if answer <= len(cells):
-                                    cell = cells[answer - 1]
-                                    try:
-                                        await cell.scroll_into_view_if_needed()
-                                        await asyncio.sleep(0.3)
-                                        await cell.click(force=True, timeout=5000)
-                                    except:
+                                cell_selector = f'#rc-imageselect-target td:nth-child({answer})'
+                                try:
+                                    await challenge_frame.wait_for_selector(cell_selector, state='visible', timeout=10000)
+                                    cell = await challenge_frame.query_selector(cell_selector)
+                                    await cell.click(force=True, timeout=5000)
+                                except:
+                                    cell = await challenge_frame.query_selector(cell_selector)
+                                    if cell:
                                         await cell.evaluate('el => el.click()')
-                                    random_delay(mu=0.5, sigma=0.1)
+                                random_delay(mu=0.6, sigma=0.3)
                         else:
                             logger.info(f"    [轮次 {dynamic_rounds}] 未识别到更多目标，结束")
                             break
@@ -722,17 +726,20 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                 elif captcha_type == "selection" or captcha_type == "squares":
                     # 一次性选择：直接点击所有答案
                     logger.info(f"  开始 {captcha_type} 验证流程...")
-                    cells = await challenge_frame.query_selector_all('#rc-imageselect-target td')
+                    # 等待第一个方格可点击
+                    await challenge_frame.wait_for_selector('#rc-imageselect-target td:first-child', state='visible', timeout=10000)
+                    
                     for answer in answers:
-                        if answer <= len(cells):
-                            cell = cells[answer - 1]
-                            try:
-                                await cell.scroll_into_view_if_needed()
-                                await asyncio.sleep(0.3)
-                                await cell.click(force=True, timeout=5000)
-                            except:
+                        cell_selector = f'#rc-imageselect-target td:nth-child({answer})'
+                        try:
+                            await challenge_frame.wait_for_selector(cell_selector, state='visible', timeout=10000)
+                            cell = await challenge_frame.query_selector(cell_selector)
+                            await cell.click(force=True, timeout=5000)
+                        except:
+                            cell = await challenge_frame.query_selector(cell_selector)
+                            if cell:
                                 await cell.evaluate('el => el.click()')
-                            random_delay(mu=0.3, sigma=0.1)
+                        random_delay(mu=0.6, sigma=0.3)
                 
                 # 点击验证按钮
                 verify_btn = await challenge_frame.query_selector('#recaptcha-verify-button')
