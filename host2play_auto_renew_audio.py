@@ -177,7 +177,21 @@ class AudioProcessor:
         return text
 
 
-async def solve_recaptcha_audio(page: Page, max_attempts: int = 5) -> bool:
+async def check_rate_limit(frame: Frame) -> bool:
+    """检查是否被限流"""
+    try:
+        rate_limit = frame.locator(".rc-doscaptcha-header, .rc-doscaptcha-body, .rc-doscaptcha-header-text")
+        rate_limit_text = await rate_limit.text_content(timeout=2000)
+        if rate_limit_text and ("try again later" in rate_limit_text.lower() or 
+                               "稍后再试" in rate_limit_text or
+                               "unusual traffic" in rate_limit_text.lower()):
+            return True
+    except:
+        pass
+    return False
+
+
+async def solve_recaptcha_audio(page: Page, max_attempts: int = 3) -> bool:
     """使用音频挑战解决 reCAPTCHA"""
     logger.info("🔍 开始处理 reCAPTCHA（音频方式）...")
     
@@ -185,7 +199,8 @@ async def solve_recaptcha_audio(page: Page, max_attempts: int = 5) -> bool:
     
     try:
         # 步骤 1: 查找并点击 reCAPTCHA checkbox
-        await asyncio.sleep(2)
+        # 增加随机延迟，避免被检测为机器人
+        await asyncio.sleep(random.uniform(2.5, 4.0))
         
         checkbox_frame = None
         for frame in page.frames:
@@ -203,15 +218,15 @@ async def solve_recaptcha_audio(page: Page, max_attempts: int = 5) -> bool:
                 '#recaptcha-anchor, .recaptcha-checkbox-border',
                 timeout=10000
             )
-            await asyncio.sleep(random.uniform(0.3, 0.8))
+            await asyncio.sleep(random.uniform(0.8, 1.5))
             await checkbox.click()
             logger.info("  ✅ Checkbox 已点击")
         except Exception as e:
             logger.error(f"  ❌ 点击 checkbox 失败: {e}")
             return False
         
-        # 步骤 2: 等待挑战 iframe 出现
-        await asyncio.sleep(3)
+        # 步骤 2: 等待挑战 iframe 出现（增加等待时间）
+        await asyncio.sleep(random.uniform(4.0, 6.0))
         
         challenge_frame = None
         for frame in page.frames:
@@ -230,15 +245,20 @@ async def solve_recaptcha_audio(page: Page, max_attempts: int = 5) -> bool:
             try:
                 logger.info(f"\n=== 尝试 {attempt + 1}/{max_attempts} ===")
                 
+                # 第一次尝试前增加随机延迟
+                if attempt == 0:
+                    wait_time = random.uniform(1.5, 3.0)
+                    logger.info(f"  ⏳ 等待 {wait_time:.1f} 秒后再操作...")
+                    await asyncio.sleep(wait_time)
+                
                 # 检查是否被限流
-                try:
-                    rate_limit = challenge_frame.locator(".rc-doscaptcha-header")
-                    rate_limit_text = await rate_limit.text_content(timeout=2000)
-                    if rate_limit_text and "try again later" in rate_limit_text.lower():
-                        logger.error("❌ reCAPTCHA 已被限流，请稍后再试")
-                        return False
-                except:
-                    pass  # 没有限流提示
+                if await check_rate_limit(challenge_frame):
+                    logger.error("❌ reCAPTCHA 已被限流，请稍后再试")
+                    logger.warning("💡 建议：")
+                    logger.warning("   1. 等待 15-30 分钟后重试")
+                    logger.warning("   2. 使用不同的 IP 地址或代理")
+                    logger.warning("   3. 避免短时间内多次尝试")
+                    return False
                 
                 # 点击音频按钮
                 try:
@@ -247,21 +267,26 @@ async def solve_recaptcha_audio(page: Page, max_attempts: int = 5) -> bool:
                         state='visible',
                         timeout=5000
                     )
+                    # 人类化延迟
+                    await asyncio.sleep(random.uniform(0.5, 1.2))
                     await audio_button.click()
                     logger.info("  ✅ 音频按钮已点击")
-                    await asyncio.sleep(2)
+                    # 等待音频加载，增加时间
+                    await asyncio.sleep(random.uniform(3.0, 5.0))
                 except PlaywrightTimeoutError:
                     # 再次检查限流
+                    if await check_rate_limit(challenge_frame):
+                        logger.error("❌ reCAPTCHA 已被限流")
+                        logger.warning("💡 建议：等待 15-30 分钟后重试")
+                        return False
+                    
+                    logger.error("  ❌ 未找到音频按钮（可能已被限流）")
+                    # 尝试截图看看当前状态
                     try:
-                        rate_limit = challenge_frame.locator(".rc-doscaptcha-header")
-                        rate_limit_text = await rate_limit.text_content(timeout=2000)
-                        if rate_limit_text and "try again later" in rate_limit_text.lower():
-                            logger.error("❌ reCAPTCHA 已被限流")
-                            return False
+                        await page.screenshot(path='host2play_audio_button_not_found.png', full_page=True)
+                        logger.info("  📸 已保存截图: host2play_audio_button_not_found.png")
                     except:
                         pass
-                    
-                    logger.error("  ❌ 未找到音频按钮")
                     return False
                 
                 # 步骤 4: 获取音频下载链接
@@ -269,7 +294,7 @@ async def solve_recaptcha_audio(page: Page, max_attempts: int = 5) -> bool:
                     download_link = await challenge_frame.wait_for_selector(
                         '.rc-audiochallenge-tdownload-link',
                         state='visible',
-                        timeout=10000
+                        timeout=15000  # 增加超时时间
                     )
                     audio_url = await download_link.get_attribute('href')
                     
@@ -281,6 +306,10 @@ async def solve_recaptcha_audio(page: Page, max_attempts: int = 5) -> bool:
                     
                 except PlaywrightTimeoutError:
                     logger.error("  ❌ 音频加载超时")
+                    # 检查是否被限流
+                    if await check_rate_limit(challenge_frame):
+                        logger.error("❌ 音频加载失败：已被限流")
+                        return False
                     continue
                 
                 # 步骤 5: 处理音频（下载、转换、识别）
@@ -468,9 +497,10 @@ async def main():
     renew_url = RENEW_URL
     
     print("="*70)
-    print("  🔐 Host2Play 自动续期脚本 (Audio Solver 版)")
+    print("  🔐 Host2Play 自动续期脚本 (Audio Solver 版 v2.1)")
     print(f"  🌐 续期 URL: {renew_url[:50]}...")
     print("  🤖 模式: Playwright + Camoufox + Audio reCAPTCHA")
+    print("  ⚡ 改进: 增强的限流检测和人类化行为")
     print("="*70)
     print()
     
@@ -576,6 +606,8 @@ async def main():
             
             # Step 4: 处理 reCAPTCHA（音频方式）
             logger.info("\n[4/4] 🔐 处理 reCAPTCHA（音频方式）...")
+            logger.info("💡 提示：使用音频验证避免图像识别问题")
+            logger.info("⏰ 此过程可能需要 10-30 秒，请耐心等待...")
             
             recaptcha_success = await solve_recaptcha_audio(page)
             
