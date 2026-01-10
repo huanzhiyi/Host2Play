@@ -181,39 +181,80 @@ def random_delay(mu=0.3, sigma=0.1):
 
 
 def download_img(name, url):
-    """下载图片"""
+    """下载图片 - 增强版"""
     try:
-        response = requests.get(url, stream=True, timeout=10)
-        response.raise_for_status()
+        # 输出 URL 信息用于调试
+        if VERBOSE:
+            logger.info(f"  📥 下载图片 {name}: {url[:100]}{'...' if len(url) > 100 else ''}")
         
-        with open(f'{name}.png', 'wb') as out_file:
-            shutil.copyfileobj(response.raw, out_file)
-        del response
+        # 检查是否是 Base64 编码的图片
+        if url.startswith('data:image'):
+            logger.info(f"  🔍 检测到 Base64 编码图片")
+            import base64
+            try:
+                header, data = url.split(',', 1)
+                image_data = base64.b64decode(data)
+                with open(f'{name}.png', 'wb') as f:
+                    f.write(image_data)
+                logger.info(f"  ✅ Base64 图片解码成功: {len(image_data)} bytes")
+            except Exception as e:
+                logger.error(f"  ❌ Base64 解码失败: {e}")
+                return False
+        else:
+            # 正常 URL，使用 requests 下载
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.google.com/recaptcha/',
+                'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+            }
+            
+            response = requests.get(url, stream=True, timeout=10, headers=headers)
+            response.raise_for_status()
+            
+            # 检查 Content-Type
+            content_type = response.headers.get('Content-Type', '')
+            if VERBOSE:
+                logger.info(f"  📋 Content-Type: {content_type}")
+            
+            if 'image' not in content_type and content_type:
+                logger.error(f"  ❌ URL 返回的不是图片: {content_type}")
+                return False
+            
+            with open(f'{name}.png', 'wb') as out_file:
+                shutil.copyfileobj(response.raw, out_file)
+            del response
         
         # 验证图片文件
         file_size = os.path.getsize(f'{name}.png')
         if file_size < 1000:
-            logger.error(f"✗ 下载的图片文件过小: {name}.png ({file_size} bytes)")
-            # 尝试查看文件内容
+            logger.error(f"  ❌ 图片文件过小: {name}.png ({file_size} bytes)")
+            # 查看文件内容
             with open(f'{name}.png', 'rb') as f:
-                content = f.read(200)
-                logger.error(f"   文件前 200 字节: {content[:200]}")
+                content = f.read(500)
+                logger.error(f"  📄 文件前 500 字节: {content[:500]}")
             return False
         
         # 尝试打开验证
         try:
             test_img = Image.open(f'{name}.png')
             test_img.verify()
+            # 重新打开获取尺寸（verify 后需要重新打开）
+            test_img = Image.open(f'{name}.png')
             if VERBOSE:
-                logger.info(f"  ✓ 图片下载成功: {name}.png ({file_size} bytes, {test_img.size})")
+                logger.info(f"  ✅ 图片验证成功: {name}.png ({file_size} bytes, {test_img.size})")
         except Exception as e:
-            logger.error(f"✗ 图片文件损坏: {name}.png - {e}")
+            logger.error(f"  ❌ 图片文件损坏: {name}.png - {e}")
+            with open(f'{name}.png', 'rb') as f:
+                content = f.read(100)
+                logger.error(f"  📄 文件头: {content[:100]}")
             return False
         
         return True
     except Exception as e:
         if VERBOSE:
-            logger.error(f"✗ 图片下载失败 {name}: {e}")
+            logger.error(f"  ❌ 图片下载失败 {name}: {e}")
+            import traceback
+            traceback.print_exc()
         return False
 
 
