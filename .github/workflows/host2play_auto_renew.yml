@@ -62,9 +62,11 @@ jobs:
           python -m pip install --upgrade pip
           # 按 requirements.txt 安装，避免依赖漂移
           pip install --default-timeout=300 --retries 3 -r requirements.txt --no-cache-dir
+          # CloudflareBypasser 方案依赖 seleniumbase
+          pip install --default-timeout=300 --retries 3 seleniumbase --no-cache-dir
           # 强制修复 selenium-wire 兼容：blinker 新版本移除了 blinker._saferef
           pip install --default-timeout=300 --retries 3 --upgrade --force-reinstall blinker==1.7.0 --no-cache-dir
-          python -c "import blinker; import seleniumwire; import seleniumwire.undetected_chromedriver as wd; print('deps ok', blinker.__version__)"
+          python -c "import blinker; import seleniumbase; import seleniumwire; import seleniumwire.undetected_chromedriver as wd; print('deps ok', blinker.__version__)"
       
       - name: Install Chromium
         run: |
@@ -194,6 +196,8 @@ jobs:
             host2play_error_recaptcha_modal.png
             host2play_error_no_renew_button.png
             failed_square_*.png
+            cf_bypass_attempt_*.png
+            cf_bypass_success.png
             0.png
             1.png
             2.png
