@@ -865,13 +865,18 @@ async def main():
         logger.info("🤖 检测到 CI 环境，使用 headless 模式")
     
     # 使用 Camoufox 浏览器（自动反检测，类似 katabump）
+    logger.info("🚀 启动 Camoufox 浏览器...")
+    logger.info(f"   Headless 模式: {is_ci}")
+    
     async with AsyncCamoufox(
         headless=is_ci,
         os=["windows"],
         screen=Screen(max_width=1920, max_height=1080),
     ) as browser:
+        logger.info("✅ Camoufox 浏览器启动成功")
         
         page = await browser.new_page()
+        logger.info("✅ 新页面创建成功")
         
         try:
             # Step 1: 访问续期页面
