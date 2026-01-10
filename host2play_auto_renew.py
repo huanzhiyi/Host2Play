@@ -184,9 +184,32 @@ def download_img(name, url):
     """下载图片"""
     try:
         response = requests.get(url, stream=True, timeout=10)
+        response.raise_for_status()
+        
         with open(f'{name}.png', 'wb') as out_file:
             shutil.copyfileobj(response.raw, out_file)
         del response
+        
+        # 验证图片文件
+        file_size = os.path.getsize(f'{name}.png')
+        if file_size < 1000:
+            logger.error(f"✗ 下载的图片文件过小: {name}.png ({file_size} bytes)")
+            # 尝试查看文件内容
+            with open(f'{name}.png', 'rb') as f:
+                content = f.read(200)
+                logger.error(f"   文件前 200 字节: {content[:200]}")
+            return False
+        
+        # 尝试打开验证
+        try:
+            test_img = Image.open(f'{name}.png')
+            test_img.verify()
+            if VERBOSE:
+                logger.info(f"  ✓ 图片下载成功: {name}.png ({file_size} bytes, {test_img.size})")
+        except Exception as e:
+            logger.error(f"✗ 图片文件损坏: {name}.png - {e}")
+            return False
+        
         return True
     except Exception as e:
         if VERBOSE:
