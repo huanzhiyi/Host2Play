@@ -2,8 +2,9 @@ name: Host2Play Auto Renew (Audio Solver)
 
 on:
   schedule:
-    # 每天运行一次，北京时间 10:00 (UTC 02:00)
-    - cron: '0 2 * * *'
+    # 每2天运行一次，北京时间 10:00 (UTC 02:00)
+    # 降低频率以避免 reCAPTCHA 限流
+    - cron: '0 2 */2 * *'
   workflow_dispatch:  # 允许手动触发
 
 jobs:
