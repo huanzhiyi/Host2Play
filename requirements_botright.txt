@@ -1,0 +1,18 @@
+# Host2Play 自动续期脚本依赖 (Botright 多策略版)
+
+# Botright - 强大的反检测浏览器
+botright>=0.5.1
+
+# Playwright-recaptcha - 音频识别封装
+playwright-recaptcha>=0.5.1
+
+# Playwright 浏览器自动化
+playwright>=1.40.0
+
+# HTTP 请求（Telegram 通知和 2Captcha）
+requests>=2.31.0
+
+# 注意：
+# - botright 会自动安装 playwright 和其他依赖
+# - playwright-recaptcha 包含 SpeechRecognition 和 pydub
+# - 系统需要安装 ffmpeg（用于音频处理）
