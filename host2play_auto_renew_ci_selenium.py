@@ -514,20 +514,25 @@ def main() -> int:
     chrome_options = webdriver.ChromeOptions()
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-gpu')
     chrome_options.add_argument('--ignore-certificate-errors')
     chrome_options.add_argument('--ignore-ssl-errors')
     chrome_options.add_argument('--allow-insecure-localhost')
     chrome_options.add_argument('--disable-web-security')
     chrome_options.add_argument('--lang=en-US')
+    chrome_options.add_argument('--window-position=0,0')
+    chrome_options.add_argument('--start-maximized')
     try:
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
     except Exception:
         pass
 
-    # CI 上建议 headless；如遇 CF 过不去，可改为 xvfb-run + 非 headless
-    if CI:
+    # 默认在 CI 下不强制 headless：使用 xvfb-run 模拟有头浏览器，提高 Cloudflare 通过率
+    headless_env = os.environ.get('HEADLESS', '').strip().lower()
+    headless = headless_env in ('1', 'true', 'yes')
+    if headless:
         chrome_options.add_argument('--headless=new')
-        chrome_options.add_argument('--window-size=1920,1080')
+    chrome_options.add_argument('--window-size=1920,1080')
 
     seleniumwire_options = {
         'no_proxy': 'localhost,127.0.0.1',
