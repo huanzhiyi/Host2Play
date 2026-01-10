@@ -1,4 +1,4 @@
-name: Host2Play Auto Renew (Playwright)
+name: Host2Play Auto Renew (Audio Solver)
 
 on:
   schedule:
@@ -28,43 +28,35 @@ jobs:
       
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          lfs: false  # 禁用 LFS，避免拉取失败，改用直接下载
       
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
-          cache-dependency-path: 'requirements_playwright.txt'
+          cache-dependency-path: 'requirements_audio.txt'
       
-      - name: Install system dependencies (minimal)
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget
+          # 安装 ffmpeg（音频处理）和其他依赖
+          sudo apt-get install -y ffmpeg libavcodec-extra
+          # 验证 ffmpeg 安装
+          ffmpeg -version
       
       - name: Cache Playwright browsers
         uses: actions/cache@v3
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium
-      
-      - name: Cache YOLO model
-        uses: actions/cache@v3
-        id: yolo-model-cache
-        with:
-          path: model.onnx
-          key: yolo-model-onnx-v1
+          key: playwright-${{ runner.os }}-chromium-v2
       
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # Playwright + Camoufox（可过 Cloudflare）
-          pip install --default-timeout=300 --retries 3 playwright camoufox browserforge requests --no-cache-dir
-          # YOLO 推理依赖（固定 onnxruntime 版本避免兼容性问题）
-          pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime==1.20.0 --no-cache-dir
-          python -c "import camoufox; import browserforge; import ultralytics; import onnxruntime; print('deps ok')"
+          pip install -r requirements_audio.txt --no-cache-dir
+          # 验证关键依赖
+          python -c "import playwright; import camoufox; import speech_recognition; import pydub; print('✅ 所有依赖导入成功')"
       
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
@@ -76,106 +68,29 @@ jobs:
         run: |
           playwright install-deps chromium
       
-      - name: Download YOLO model
-        if: steps.yolo-model-cache.outputs.cache-hit != 'true'
+      - name: Test audio processing
         run: |
-          echo "🔍 缓存未命中，需要下载 model.onnx..."
-          
-          # 删除可能存在的 LFS 指针文件
-          rm -f model.onnx
-          
-          echo "📥 从 DannyLuna17 的 fork 仓库下载 YOLO 模型..."
-          
-          # 尝试从 GitHub LFS media 下载
-          echo "🔄 尝试方法 1: GitHub LFS media 链接..."
-          curl -L -o model.onnx "https://media.githubusercontent.com/media/DannyLuna17/RecaptchaV2-IA-Solver/main/model.onnx" && {
-            FILE_SIZE=$(stat -c%s model.onnx 2>/dev/null || stat -f%z model.onnx)
-            if [ $FILE_SIZE -gt 1000000 ]; then
-              echo "✅ 下载成功！文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
-              exit 0
-            fi
-          }
-          
-          echo "⚠️ 方法 1 失败，尝试方法 2: Hugging Face 镜像..."
-          rm -f model.onnx
-          curl -L -o model.onnx "https://huggingface.co/spaces/yolov8/yolov8/resolve/main/model.onnx" && {
-            FILE_SIZE=$(stat -c%s model.onnx 2>/dev/null || stat -f%z model.onnx)
-            if [ $FILE_SIZE -gt 1000000 ]; then
-              echo "✅ 下载成功！文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
-              exit 0
-            fi
-          }
-          
-          echo "⚠️ 方法 2 失败，尝试方法 3: 直接 GitHub raw..."
-          rm -f model.onnx
-          curl -L -o model.onnx "https://github.com/DannyLuna17/RecaptchaV2-IA-Solver/raw/main/model.onnx" && {
-            FILE_SIZE=$(stat -c%s model.onnx 2>/dev/null || stat -f%z model.onnx)
-            if [ $FILE_SIZE -gt 1000000 ]; then
-              echo "✅ 下载成功！文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
-              exit 0
-            fi
-          }
-          
-          echo "⚠️ 方法 3 失败，尝试方法 4: 使用 wget 重试..."
-          rm -f model.onnx
-          wget -O model.onnx "https://media.githubusercontent.com/media/DannyLuna17/RecaptchaV2-IA-Solver/main/model.onnx" && {
-            if [ -f model.onnx ]; then
-              FILE_SIZE=$(stat -c%s model.onnx 2>/dev/null || stat -f%z model.onnx)
-              if [ $FILE_SIZE -gt 1000000 ]; then
-                echo "✅ wget 下载成功！文件大小: $(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB"
-                exit 0
-              fi
-            fi
-          }
-          
-          echo "❌ 所有下载方法均失败，YOLO 检测将不可用"
-          ls -lh model.onnx 2>/dev/null || echo "文件不存在"
+          python -c "
+import speech_recognition as sr
+from pydub import AudioSegment
+print('✅ SpeechRecognition version:', sr.__version__)
+print('✅ Audio processing libraries loaded successfully')
+          "
       
-      - name: Verify YOLO model
-        run: |
-          echo "🔍 验证 model.onnx 文件..."
-          
-          if [ -f model.onnx ]; then
-            # Linux 和 macOS 兼容的文件大小获取
-            FILE_SIZE=$(stat -c%s model.onnx 2>/dev/null || stat -f%z model.onnx)
-            echo "📦 文件大小: $FILE_SIZE bytes ($(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB)"
-            
-            if [ $FILE_SIZE -lt 1000000 ]; then
-              echo "❌ 错误: 文件大小异常 ($FILE_SIZE bytes)，可能是 LFS 指针文件"
-              echo "📄 文件内容:"
-              head -n 5 model.onnx
-              echo ""
-              echo "💡 提示: 缓存可能包含了损坏的文件"
-              echo "   建议: 清除缓存或修改缓存 key 重新下载"
-              exit 1
-            else
-              echo "✅ 模型文件验证通过 ($(echo "scale=2; $FILE_SIZE/1024/1024" | bc) MB)"
-            fi
-          else
-            echo "❌ 错误: model.onnx 文件不存在"
-            echo "💡 提示: 所有下载方法均失败，请检查网络或下载链接"
-            exit 1
-          fi
-      
-      - name: Test YOLO import
-        run: |
-          python tmp_rovodev_test_yolo_import.py
-      
-      - name: Run auto renew script
+      - name: Run auto renew script (Audio Solver)
         env:
           RENEW_URL: ${{ secrets.RENEW_URL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CI: 'true'
-          KEEP_CAPTCHA_IMAGES: 'true'
         run: |
-          python host2play_auto_renew.py
+          python host2play_auto_renew_audio.py
       
       - name: Upload success screenshot
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: renew-success-${{ github.run_number }}
+          name: renew-success-audio-${{ github.run_number }}
           path: host2play_renew_success.png
           retention-days: 7
           if-no-files-found: ignore
@@ -184,12 +99,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: renew-debug-${{ github.run_number }}
+          name: renew-debug-audio-${{ github.run_number }}
           path: |
-            0.png
-            failed_square_*.png
-            host2play_cloudflare_wait.png
-            host2play_error*.png
             host2play_*.png
           retention-days: 7
           if-no-files-found: ignore
@@ -198,33 +109,10 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: renew-error-${{ github.run_number }}
+          name: renew-error-audio-${{ github.run_number }}
           path: |
             host2play_error*.png
             host2play_*.png
-            host2play_cloudflare_wait.png
-            host2play_error_cloudflare.png
-            host2play_error_recaptcha_page.png
-            host2play_error_recaptcha_modal.png
-            host2play_error_no_renew_button.png
-            failed_square_*.png
-            0.png
-            1.png
-            2.png
-            3.png
-            4.png
-            5.png
-            6.png
-            7.png
-            8.png
-            9.png
-            10.png
-            11.png
-            12.png
-            13.png
-            14.png
-            15.png
-            16.png
           retention-days: 7
           if-no-files-found: ignore
       
