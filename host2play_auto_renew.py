@@ -621,10 +621,14 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                     for answer in answers:
                         if answer <= len(cells):
                             cell = cells[answer - 1]
-                            # 确保元素在视口内
-                            await cell.scroll_into_view_if_needed()
-                            await asyncio.sleep(0.2)
-                            await cell.click(force=True)
+                            try:
+                                # 尝试正常点击
+                                await cell.scroll_into_view_if_needed()
+                                await asyncio.sleep(0.3)
+                                await cell.click(force=True, timeout=5000)
+                            except:
+                                # 备选：使用 JavaScript 点击
+                                await cell.evaluate('el => el.click()')
                             random_delay(mu=0.5, sigma=0.2)
                     
                     # 持续处理新图片
@@ -704,9 +708,12 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                             for answer in answers:
                                 if answer <= len(cells):
                                     cell = cells[answer - 1]
-                                    await cell.scroll_into_view_if_needed()
-                                    await asyncio.sleep(0.2)
-                                    await cell.click(force=True)
+                                    try:
+                                        await cell.scroll_into_view_if_needed()
+                                        await asyncio.sleep(0.3)
+                                        await cell.click(force=True, timeout=5000)
+                                    except:
+                                        await cell.evaluate('el => el.click()')
                                     random_delay(mu=0.5, sigma=0.1)
                         else:
                             logger.info(f"    [轮次 {dynamic_rounds}] 未识别到更多目标，结束")
@@ -719,9 +726,12 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                     for answer in answers:
                         if answer <= len(cells):
                             cell = cells[answer - 1]
-                            await cell.scroll_into_view_if_needed()
-                            await asyncio.sleep(0.2)
-                            await cell.click(force=True)
+                            try:
+                                await cell.scroll_into_view_if_needed()
+                                await asyncio.sleep(0.3)
+                                await cell.click(force=True, timeout=5000)
+                            except:
+                                await cell.evaluate('el => el.click()')
                             random_delay(mu=0.3, sigma=0.1)
                 
                 # 点击验证按钮
