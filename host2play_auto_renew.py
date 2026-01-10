@@ -395,6 +395,55 @@ def paste_new_img_on_main_img(main, new, loc):
     cv2.imwrite('0.png', paste)
 
 
+def normalize_captcha_image(path: str, expected_size: tuple[int, int]) -> bool:
+    """将截图得到的验证码图片标准化到 YOLO 预期尺寸（3x3:300x300, 4x4:450x450）"""
+    try:
+        img = Image.open(path).convert('RGB')
+        if img.size != expected_size:
+            img = img.resize(expected_size, Image.BILINEAR)
+            img.save(path)
+        return True
+    except Exception as e:
+        logger.error(f"❌ 标准化图片失败 {path}: {e}")
+        return False
+
+
+async def screenshot_captcha_grid(challenge_frame: Frame, grid_size: int) -> bool:
+    """截图整个验证码网格到 0.png。grid_size=3 或 4"""
+    try:
+        # rc-imageselect-target 包含表格网格
+        grid = await challenge_frame.wait_for_selector('#rc-imageselect-target', timeout=10000)
+        await grid.screenshot(path='0.png')
+        expected = (300, 300) if grid_size == 3 else (450, 450)
+        if not normalize_captcha_image('0.png', expected):
+            return False
+        try:
+            fs = os.path.getsize('0.png')
+            sz = Image.open('0.png').size
+            logger.info(f"  ✅ 验证码网格截图成功: 0.png -> {expected}, 实际: {sz}, {fs} bytes")
+        except Exception:
+            logger.info(f"  ✅ 验证码网格截图成功: 0.png -> {expected}")
+        return True
+    except Exception as e:
+        logger.error(f"  ❌ 验证码网格截图失败: {e}")
+        return False
+
+
+async def screenshot_captcha_tile(challenge_frame: Frame, index: int, grid_size: int) -> bool:
+    """截图单个方格到 {index}.png。index 从 1 开始"""
+    try:
+        cell_selector = f'#rc-imageselect-target td:nth-child({index})'
+        cell = await challenge_frame.wait_for_selector(cell_selector, timeout=10000)
+        await cell.screenshot(path=f'{index}.png')
+        expected = (100, 100) if grid_size == 3 else (112, 112)
+        # 4x4 单格理论是 112.5，这里用 112 近似（只用于拼接/调试），主识别用 0.png
+        normalize_captcha_image(f'{index}.png', expected)
+        return True
+    except Exception as e:
+        logger.warning(f"    ⚠️ 方格截图失败 {index}: {e}")
+        return False
+
+
 async def find_and_click_turnstile(page: Page, retries: int = 20) -> bool:
     """查找并点击 Cloudflare Turnstile 验证框"""
     logger.info("🔍 寻找 Turnstile 验证框...")
@@ -626,26 +675,24 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                         logger.warning("  未找到验证码图片")
                         continue
                     
-                    # 下载第一张图片（3x3）或所有图片（4x4）
+                    # ⚠️ 重要：不要用 requests 下载 img_urls（会 410 Gone 过期）
+                    # 改用 Playwright 在浏览器上下文中直接截图网格
                     if "squares" in title_text.lower():
-                        # 4x4: 只下载第一张完整图片
-                        if not download_img(0, img_urls[0]):
-                            continue
                         logger.info("  检测到 4x4 方格验证")
+                        if not await screenshot_captcha_grid(challenge_frame, grid_size=4):
+                            continue
                         answers = square_solver(target_num, VERBOSE, model)
                         captcha_type = "squares"
                     else:
-                        # 3x3: 下载第一张图片
-                        if not download_img(0, img_urls[0]):
-                            continue
-                        
                         if "none" in title_text.lower():
                             logger.info("  检测到 3x3 动态验证")
                             captcha_type = "dynamic"
                         else:
                             logger.info("  检测到 3x3 选择验证")
                             captcha_type = "selection"
-                        
+
+                        if not await screenshot_captcha_grid(challenge_frame, grid_size=3):
+                            continue
                         answers = dynamic_and_selection_solver(target_num, VERBOSE, model)
                     
                     # 检查识别结果
@@ -738,34 +785,22 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                             logger.info(f"    [轮次 {dynamic_rounds}] 没有新图片，结束动态验证")
                             break
                         
-                        # 下载新图片
+                        # ⚠️ 动态验证：不要下载新图片 URL（会过期 410）
+                        # 直接对发生变化的方格截图，然后拼回 0.png
                         for answer in answers:
-                            if answer <= len(img_urls):
-                                download_img(answer, img_urls[answer-1])
-                        
-                        # 更新主图片
+                            await screenshot_captcha_tile(challenge_frame, answer, grid_size=3)
+
+                        # 更新主图片（0.png）
                         try:
                             for answer in answers:
-                                main_img = Image.open("0.png")
-                                new_img = Image.open(f"{answer}.png")
-                                paste_new_img_on_main_img(main_img, new_img, answer)
+                                main_img = Image.open('0.png').convert('RGB')
+                                new_img = Image.open(f"{answer}.png").convert('RGB')
+                                paste_new_img_on_main_img(np.asarray(main_img), np.asarray(new_img), answer)
+                            normalize_captcha_image('0.png', (300, 300))
                         except Exception as e:
                             logger.warning(f"    更新图片失败: {e}")
-                            # 重新获取所有图片
-                            await asyncio.sleep(0.5)
-                            img_elements = await challenge_frame.query_selector_all('#rc-imageselect-target img')
-                            new_img_urls = []
-                            for img in img_elements:
-                                url = await img.get_attribute('src')
-                                if url:
-                                    new_img_urls.append(url)
-                            for answer in answers:
-                                if answer <= len(new_img_urls):
-                                    download_img(answer, new_img_urls[answer-1])
-                            for answer in answers:
-                                main_img = Image.open("0.png")
-                                new_img = Image.open(f"{answer}.png")
-                                paste_new_img_on_main_img(main_img, new_img, answer)
+                            # 兜底：直接重新截图整个网格
+                            await screenshot_captcha_grid(challenge_frame, grid_size=3)
                         
                         # 重新识别
                         answers = dynamic_and_selection_solver(target_num, VERBOSE, model)
