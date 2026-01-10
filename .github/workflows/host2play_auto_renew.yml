@@ -71,9 +71,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y chromium-browser
 
-      - name: Install Xvfb (optional)
+      - name: Install Xvfb
         run: |
-          sudo apt-get install -y xvfb || true
+          sudo apt-get update
+          sudo apt-get install -y xvfb
       
       - name: Download YOLO model
         if: steps.yolo-model-cache.outputs.cache-hit != 'true'
@@ -166,8 +167,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           CI: 'true'
+          HEADLESS: 'false'
         run: |
-          python host2play_auto_renew_ci_selenium.py
+          xvfb-run -a python host2play_auto_renew_ci_selenium.py
       
       - name: Upload success screenshot
         if: success()
