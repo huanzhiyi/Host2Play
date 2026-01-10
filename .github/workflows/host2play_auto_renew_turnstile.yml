@@ -1,0 +1,174 @@
+name: Host2Play Auto Renew (Turnstile Enhanced)
+
+on:
+  # 定时运行：每天 UTC 00:00 (北京时间 08:00)
+  schedule:
+    - cron: '0 0 * * *'
+  
+  # 允许手动触发
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: '启用调试模式'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  renew-with-turnstile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: 📦 Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            wget \
+            gnupg \
+            chromium-browser \
+            chromium-chromedriver
+          
+          # 验证 Chrome 安装
+          chromium-browser --version || google-chrome --version || echo "Chrome not found"
+      
+      - name: 📚 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_turnstile.txt
+          
+          # 显示关键依赖版本
+          echo "=== Key Dependencies ==="
+          pip list | grep -E "(selenium|turnstile|opencv|ultralytics|undetected)" || true
+      
+      - name: 🔍 Verify turnstile-solver installation
+        run: |
+          python -c "from turnstile_solver import solve, Solver; print('✅ turnstile-solver installed successfully')"
+      
+      - name: 📥 Download YOLO model (if needed)
+        run: |
+          if [ ! -f "model.onnx" ]; then
+            echo "Downloading YOLO model..."
+            python download_yolo_model.py || echo "Model download script not found, will download during execution"
+          else
+            echo "YOLO model already exists"
+            ls -lh model.onnx
+          fi
+      
+      - name: 🛡️ Run renewal with Turnstile bypass
+        id: renew
+        run: |
+          echo "Starting Host2Play renewal with Turnstile support..."
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            python host2play_auto_renew_ci_selenium_fixed.py
+        env:
+          RENEW_URL: ${{ secrets.RENEW_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HEADLESS: "false"  # 使用 xvfb-run，不需要完全 headless
+          CI: "true"
+          YOLO_MODEL_PATH: "model.onnx"
+          YOLO_MODEL_URL_1: ${{ secrets.YOLO_MODEL_URL_1 || 'https://media.githubusercontent.com/media/DannyLuna17/RecaptchaV2-IA-Solver/main/model.onnx' }}
+          YOLO_MODEL_URL_2: ${{ secrets.YOLO_MODEL_URL_2 || 'https://github.com/DannyLuna17/RecaptchaV2-IA-Solver/raw/main/model.onnx' }}
+      
+      - name: 📊 Display run summary
+        if: always()
+        run: |
+          echo "### 🎯 Renewal Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "host2play_renew_success.png" ]; then
+            echo "✅ **Status**: SUCCESS" >> $GITHUB_STEP_SUMMARY
+            echo "📅 **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status**: FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "📅 **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📸 Screenshots" >> $GITHUB_STEP_SUMMARY
+          ls -1 *.png 2>/dev/null | head -10 | while read file; do
+            echo "- \`$file\`" >> $GITHUB_STEP_SUMMARY
+          done || echo "No screenshots found" >> $GITHUB_STEP_SUMMARY
+      
+      - name: 🎉 Upload success screenshot
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: success-screenshot-${{ github.run_number }}
+          path: host2play_renew_success.png
+          retention-days: 7
+          if-no-files-found: warn
+      
+      - name: 📸 Upload debug screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots-${{ github.run_number }}
+          path: |
+            turnstile_*.png
+            cf_bypass_*.png
+            host2play_cloudflare_*.png
+            *.png
+          retention-days: 7
+          if-no-files-found: ignore
+      
+      - name: ❌ Upload error screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshots-${{ github.run_number }}
+          path: |
+            host2play_error*.png
+            turnstile_failed.png
+            turnstile_error.png
+            host2play_cloudflare_wait.png
+            host2play_error_cloudflare.png
+            host2play_error_recaptcha_*.png
+            host2play_error_no_renew_button.png
+            0.png
+            1.png
+            2.png
+            3.png
+            4.png
+            5.png
+            6.png
+            7.png
+            8.png
+            9.png
+          retention-days: 14
+          if-no-files-found: ignore
+      
+      - name: 🧹 Cleanup old workflow runs
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 5
+      
+      - name: 📝 Create issue on failure
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 Host2Play 续期失败 - ${new Date().toISOString().split('T')[0]}`,
+              body: `自动续期任务失败\n\n**Run ID**: ${context.runId}\n**Workflow**: ${context.workflow}\n**Time**: ${new Date().toUTCString()}\n\n请检查 [workflow run](${context.payload.repository.html_url}/actions/runs/${context.runId}) 的日志和截图。`,
+              labels: ['automation', 'renewal-failed']
+            });
+            console.log(`Created issue #${issue.data.number}`);
