@@ -896,7 +896,16 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
         return False
     finally:
         # 清理临时图片
-        for i in range(17):
+        # 说明：0.png 是验证码网格主图，GitHub Actions 调试时需要作为 artifact 上传，不能无条件删除。
+        keep_captcha_images = os.environ.get('KEEP_CAPTCHA_IMAGES', 'true').strip().lower() in ('1', 'true', 'yes')
+        if not keep_captcha_images:
+            # 仅在明确要求清理时才删除 0.png
+            try:
+                os.remove('0.png')
+            except:
+                pass
+        # 默认只清理单格截图 1~16
+        for i in range(1, 17):
             try:
                 os.remove(f"{i}.png")
             except:
@@ -1078,12 +1087,19 @@ async def main():
             logger.info("\n[4/4] 🔐 处理 reCAPTCHA...")
             
             recaptcha_success = await solve_recaptcha_with_yolo(page)
-            
+
             if not recaptcha_success:
-                logger.warning("⚠️ reCAPTCHA 自动处理未完成")
-                logger.info("💡 等待 30 秒，看是否自动通过...")
-                await asyncio.sleep(30)
-            
+                # 关键：不要假成功。reCAPTCHA 未通过就直接失败退出，保留截图/0.png 供分析。
+                logger.error("❌ reCAPTCHA 未通过，终止流程（避免假成功）")
+                await page.screenshot(path='host2play_error_recaptcha.png', full_page=True)
+                error_message = f"""❌ *Host2Play 续期失败*
+
+❗ 错误: reCAPTCHA 未通过
+🕐 时间: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+"""
+                send_telegram_message(error_message, 'host2play_error_recaptcha.png')
+                return
+
             # 查找并点击弹窗内的 Renew 按钮
             logger.info("\n🖱️ 查找弹窗内的确认按钮...")
             
@@ -1116,9 +1132,23 @@ async def main():
             # 截图最终结果
             await page.screenshot(path='host2play_renew_success.png', full_page=True)
             logger.info("📸 最终截图: host2play_renew_success.png")
-            
+
+            # 二次校验：页面必须出现成功信号，否则按失败处理（避免假成功）
+            page_text = (await page.inner_text('body')) if await page.query_selector('body') else ''
+            text_l = page_text.lower()
+            if ('success' not in text_l) and ('renewed' not in text_l) and ('续期' not in page_text and '成功' not in page_text):
+                logger.error("❌ 未检测到成功文案，判定为失败（避免假成功）")
+                await page.screenshot(path='host2play_error_no_success_text.png', full_page=True)
+                error_message = f"""❌ *Host2Play 续期失败*
+
+❗ 错误: 未检测到成功提示文案
+🕐 时间: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`
+"""
+                send_telegram_message(error_message, 'host2play_error_no_success_text.png')
+                return
+
             logger.info("\n✅ 续期流程完成!")
-            
+
             # 发送成功通知
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
