@@ -595,7 +595,7 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                             if reload_btn:
                                 await reload_btn.click()
                     else:
-                        if len(answers) > 2:
+                        if len(answers) >= 1:
                             logger.info(f"  ✓ 识别成功，答案: {answers}")
                             break
                         else:
