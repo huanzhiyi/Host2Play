@@ -62,7 +62,7 @@ jobs:
           python -m pip install --upgrade pip
           # 分步安装以节省空间，增加超时时间和重试
           pip install --default-timeout=300 --retries 3 playwright camoufox browserforge requests --no-cache-dir
-          pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime --no-cache-dir
+          pip install --default-timeout=300 --retries 3 ultralytics opencv-python-headless pillow numpy onnxruntime==1.23.2 --no-cache-dir
       
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
