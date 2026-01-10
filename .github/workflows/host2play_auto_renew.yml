@@ -73,6 +73,16 @@ jobs:
           else
             echo "✅ model.onnx 文件已存在"
           fi
+          
+          # 检查文件大小
+          if [ -f model.onnx ]; then
+            ls -lh model.onnx
+            echo "✅ 模型文件大小: $(du -h model.onnx | cut -f1)"
+          fi
+      
+      - name: Test YOLO import
+        run: |
+          python tmp_rovodev_test_yolo_import.py
       
       - name: Run auto renew script
         env:
