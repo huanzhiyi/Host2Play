@@ -45,6 +45,13 @@ jobs:
       - name: 📚 Install Python dependencies
         run: |
           python -m pip install --upgrade pip
+          
+          # 启动虚拟显示（turnstile-solver 安装时需要）
+          export DISPLAY=:99
+          sudo Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+          sleep 3
+          
+          # 安装所有依赖
           pip install -r requirements_turnstile.txt
           
           # 显示关键依赖版本
@@ -53,6 +60,8 @@ jobs:
       
       - name: 🔍 Verify turnstile-solver installation
         run: |
+          # turnstile_solver 需要 DISPLAY 环境变量
+          export DISPLAY=:99
           python -c "from turnstile_solver import solve, Solver; print('✅ turnstile-solver installed successfully')"
       
       - name: 📥 Download YOLO model (if needed)
