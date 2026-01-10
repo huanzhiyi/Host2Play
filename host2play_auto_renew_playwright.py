@@ -597,7 +597,11 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                     cells = await challenge_frame.query_selector_all('#rc-imageselect-target td')
                     for answer in answers:
                         if answer <= len(cells):
-                            await cells[answer - 1].click()
+                            cell = cells[answer - 1]
+                            # 确保元素在视口内
+                            await cell.scroll_into_view_if_needed()
+                            await asyncio.sleep(0.2)
+                            await cell.click(force=True)
                             random_delay(mu=0.5, sigma=0.2)
                     
                     # 持续处理新图片
@@ -676,7 +680,10 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                             cells = await challenge_frame.query_selector_all('#rc-imageselect-target td')
                             for answer in answers:
                                 if answer <= len(cells):
-                                    await cells[answer - 1].click()
+                                    cell = cells[answer - 1]
+                                    await cell.scroll_into_view_if_needed()
+                                    await asyncio.sleep(0.2)
+                                    await cell.click(force=True)
                                     random_delay(mu=0.5, sigma=0.1)
                         else:
                             logger.info(f"    [轮次 {dynamic_rounds}] 未识别到更多目标，结束")
@@ -688,7 +695,10 @@ async def solve_recaptcha_with_yolo(page: Page, max_attempts: int = 10) -> bool:
                     cells = await challenge_frame.query_selector_all('#rc-imageselect-target td')
                     for answer in answers:
                         if answer <= len(cells):
-                            await cells[answer - 1].click()
+                            cell = cells[answer - 1]
+                            await cell.scroll_into_view_if_needed()
+                            await asyncio.sleep(0.2)
+                            await cell.click(force=True)
                             random_delay(mu=0.3, sigma=0.1)
                 
                 # 点击验证按钮
