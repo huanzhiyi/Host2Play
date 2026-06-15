@@ -50,6 +50,9 @@ jobs:
             "requests>=2.28.0" \
             "pyvirtualdisplay>=3.0"
 
+      - name: 安装系统依赖 (xvfb + 中文字体)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb fonts-noto-cjk
+
       - name: 安装并启动代理
         id: proxy
         env:
@@ -373,7 +376,6 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb fonts-noto-cjk
           xvfb-run -a python3 hnhost_login.py
 
       - name: 清理工作流记录
