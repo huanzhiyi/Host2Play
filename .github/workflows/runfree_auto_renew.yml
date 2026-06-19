@@ -1,4 +1,4 @@
-name: RunFreeCloud Auto Renew (Xray Proxy)
+name: RunFreeCloud Auto Renew
 
 on:
   schedule:
