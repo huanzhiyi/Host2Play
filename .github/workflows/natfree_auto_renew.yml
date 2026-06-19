@@ -277,16 +277,6 @@ jobs:
         run: |
           xvfb-run -a python3 natfree_auto_renew.py
 
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots-${{ github.run_number }}
-          path: |
-            *.png
-            screenshots/*.png
-          retention-days: 7
-
       - name: Cleanup workflow runs
         if: always()
         uses: Mattraks/delete-workflow-runs@v2
