@@ -213,7 +213,10 @@ jobs:
           ACLCLOUDS_LOGIN_URL: ${{ inputs.login_url || secrets.ACLCLOUDS_LOGIN_URL }}
           ACLCLOUDS_USERNAME: ${{ secrets.ACLCLOUDS_USERNAME }}
           ACLCLOUDS_PASSWORD: ${{ secrets.ACLCLOUDS_PASSWORD }}
+          PROXY: ${{ steps.proxy.outputs.proxy_server }}
           PROXY_NODE: ${{ steps.proxy.outputs.proxy_server }}
+          PROXY_SERVER: ${{ steps.proxy.outputs.proxy_server }}
+          USE_PROXY: "true"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python aclclouds_auto_login.py
