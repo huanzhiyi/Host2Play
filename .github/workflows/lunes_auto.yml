@@ -1,10 +1,8 @@
-name: Lunes Host 自动保活
+name: Lunes-auto
 
 on:
   schedule:
-    # 每10天运行：1号、11号、21号 中午12:12 (北京时间)
-    # UTC 时间 = 北京时间 - 8小时 = 04:12
-    - cron: '12 4 1,11,21 * *'
+    - cron: '32 2 1,11,21 * *'
   workflow_dispatch:
 
 jobs:
