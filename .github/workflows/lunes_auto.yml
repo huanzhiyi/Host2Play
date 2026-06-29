@@ -1,4 +1,4 @@
-name: Lunes-auto
+name: Lunes Auto
 
 on:
   schedule:
