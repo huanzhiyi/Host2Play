@@ -7,7 +7,7 @@ on:
 
 jobs:
   keepalive:
-    name: 执行保活
+    name: 
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,7 +20,7 @@ jobs:
       - name: 拉取仓库
         uses: actions/checkout@v4
         with:
-          repository: huanzhiyi/some-auto-newsign
+          repository: huanzhiyi/some-atuo-renew
           token: ${{ secrets.PRIVATE_REPO_TOKEN }}
           lfs: false
 
