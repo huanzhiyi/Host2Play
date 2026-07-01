@@ -1,4 +1,4 @@
-name: Lunes Auto
+name: Lunes Host 自动保活
 
 on:
   schedule:
@@ -19,6 +19,10 @@ jobs:
     steps:
       - name: 拉取仓库
         uses: actions/checkout@v4
+        with:
+          repository: huanzhiyi/some-auto-newsign
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          lfs: false
 
       - name: 设置 Python
         uses: actions/setup-python@v5
