@@ -1,8 +1,8 @@
 name: VPS8 Auto Login
 
 on:
-  #schedule:
-    #- cron: '0 2 * * *'
+  schedule:
+    - cron: '11 6 * * *'
   workflow_dispatch:
     inputs:
       login_url:
