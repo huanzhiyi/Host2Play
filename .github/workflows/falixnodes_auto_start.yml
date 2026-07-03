@@ -1,8 +1,8 @@
 name: FalixNodes Start Server
 
 on:
-  schedule:
-    - cron: '0 0,3,6,9,12,15,18 * * *'
+  #schedule:
+    #- cron: '0 0,3,6,9,12,15,18 * * *'
   workflow_dispatch:
     inputs:
       server_url:
