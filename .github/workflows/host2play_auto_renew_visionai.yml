@@ -65,13 +65,13 @@ jobs:
             "aiohttp>=3.9.0" \
             "click>=8.1.0"
 
-      - name: Install Chromium browser
+      - name: Install Chrome
         run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
-          echo "[INFO] Installed Chromium:"
-          which chromium-browser || which chromium || true
-          chromium-browser --version || chromium --version || true
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq wget
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt install -y -qq ./google-chrome-stable_current_amd64.deb
+          google-chrome --version
 
       - name: 启用 WARP 网络
         uses: fscarmen/warp-on-actions@v1.3
