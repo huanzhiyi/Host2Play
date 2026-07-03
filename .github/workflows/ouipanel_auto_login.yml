@@ -267,16 +267,6 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             python ouipanel_auto_login.py
 
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ouipanel-screenshots-${{ github.run_number }}
-          path: |
-            ouipanel_*.png
-          retention-days: 7
-          if-no-files-found: ignore
-
       - name: 清理工作流记录
         if: always()
         uses: Mattraks/delete-workflow-runs@v2
