@@ -65,13 +65,17 @@ jobs:
             "aiohttp>=3.9.0" \
             "click>=8.1.0"
 
-      - name: Install Chrome
+      - name: Pre-cache Playwright Chromium
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq wget
-          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt install -y -qq ./google-chrome-stable_current_amd64.deb
-          google-chrome --version
+          python -m playwright install chromium --with-deps
+          echo "Playwright Chromium installed"
+
+      - name: Detect Chromium path
+        id: chromium
+        run: |
+          CHROMIUM_PATH=$(python -c "import shutil; p = shutil.which('chromium-browser') or shutil.which('chromium') or shutil.which('google-chrome') or ''; print(p)")
+          echo "path=$CHROMIUM_PATH" >> $GITHUB_OUTPUT
+          echo "[INFO] Chromium path: $CHROMIUM_PATH"
 
       - name: 启用 WARP 网络
         uses: fscarmen/warp-on-actions@v1.3
@@ -107,13 +111,6 @@ jobs:
           print('ultralytics OK')
           print('playwright:', importlib.metadata.version('playwright'))
           "
-
-      - name: Detect Chromium path
-        id: chromium
-        run: |
-          CHROMIUM_PATH=$(which chromium-browser 2>/dev/null || which chromium 2>/dev/null || which google-chrome 2>/dev/null || echo "")
-          echo "path=$CHROMIUM_PATH" >> $GITHUB_OUTPUT
-          echo "[INFO] Chromium path: $CHROMIUM_PATH"
 
       - name: Run renewal script
         env:
