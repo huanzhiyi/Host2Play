@@ -57,6 +57,13 @@ jobs:
             "seleniumbase>=4.33.0" \
             "requests>=2.28.0"
 
+      - name: Pre-download chromedriver (match Chrome version)
+        run: |
+          CHROME_VER=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+' | head -1)
+          echo "Chrome: $CHROME_VER"
+          python -m seleniumbase install chromedriver $CHROME_VER
+          echo "chromedriver ready"
+
       - name: 安装并启动代理
         id: proxy
         env:
