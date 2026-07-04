@@ -65,17 +65,22 @@ jobs:
             "aiohttp>=3.9.0" \
             "click>=8.1.0"
 
-      - name: Pre-cache Playwright Chromium
+      - name: Install Chrome (for browser_path)
         run: |
-          python -m playwright install chromium --with-deps
-          echo "Playwright Chromium installed"
+          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt install -y -qq ./google-chrome-stable_current_amd64.deb
+          google-chrome --version
 
       - name: Detect Chromium path
         id: chromium
         run: |
-          CHROMIUM_PATH=$(python -c "import shutil; p = shutil.which('chromium-browser') or shutil.which('chromium') or shutil.which('google-chrome') or ''; print(p)")
+          CHROMIUM_PATH=$(python -c "import shutil; p = shutil.which('google-chrome') or shutil.which('google-chrome-stable') or ''; print(p)")
           echo "path=$CHROMIUM_PATH" >> $GITHUB_OUTPUT
           echo "[INFO] Chromium path: $CHROMIUM_PATH"
+
+      - name: Install Playwright browser
+        run: |
+          python -m playwright install chromium --with-deps
 
       - name: 启用 WARP 网络
         uses: fscarmen/warp-on-actions@v1.3
@@ -121,14 +126,6 @@ jobs:
           ENABLE_WARP: ${{ secrets.ENABLE_WARP || 'true' }}
           BROWSER_PATH: ${{ steps.chromium.outputs.path }}
         run: python host2play_auto_renew_visionai.py
-
-      - name: Upload log artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: renewal-log-${{ github.run_number }}
-          path: log.txt
-          retention-days: 7
 
       - name: 清理工作流记录
         if: always()
