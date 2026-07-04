@@ -50,6 +50,25 @@ jobs:
           sudo apt install -y -qq ./google-chrome-stable_current_amd64.deb
           google-chrome --version
 
+      - name: 启用 WARP 网络
+        uses: fscarmen/warp-on-actions@v1.3
+        with:
+          stack: dual
+          mode: client
+
+      - name: 修复 DNS
+        run: |
+          echo "[INFO] 停用 systemd-resolved，设置公共 DNS..."
+          sudo systemctl stop systemd-resolved 2>/dev/null || true
+          sudo systemctl disable systemd-resolved 2>/dev/null || true
+          sudo rm -f /etc/resolv.conf
+          echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1" | sudo tee /etc/resolv.conf
+          sleep 2
+          echo "[INFO] 当前出口 IP:"
+          curl -s --max-time 10 https://api.ipify.org && echo
+          echo "[INFO] WARP Trace:"
+          curl -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E 'ip=|warp=|loc=' || true
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -257,6 +276,7 @@ jobs:
         continue-on-error: true
         env:
           CI: true
+          ENABLE_WARP: true
           ICEHOST_LOGIN_URL: ${{ inputs.login_url || secrets.ICEHOST_LOGIN_URL }}
           ICEHOST_USERNAME: ${{ secrets.ICEHOST_USERNAME }}
           ICEHOST_PASSWORD: ${{ secrets.ICEHOST_PASSWORD }}
