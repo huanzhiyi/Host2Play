@@ -252,6 +252,21 @@ jobs:
           echo "use_proxy=false" >> $GITHUB_OUTPUT
           echo "proxy_server=" >> $GITHUB_OUTPUT
 
+      - name: Pre-heat target URL
+        if: steps.proxy.outputs.use_proxy == 'true'
+        env:
+          PROXY_URL: ${{ steps.proxy.outputs.proxy_server }}
+          TARGET_URL: ${{ inputs.login_url || secrets.ICEHOST_LOGIN_URL }}
+        run: |
+          echo "[INFO] 预热目标 URL..."
+          for i in 1 2 3; do
+            curl -x "$PROXY_URL" -s --max-time 15 -c /tmp/cf_cookies.txt \
+              -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" \
+              "$TARGET_URL" > /dev/null 2>&1 && echo "[INFO] 预热 $i/3 成功" || echo "[WARN] 预热 $i/3 失败"
+            sleep 2
+          done
+          echo "[INFO] 预热完成"
+
       - name: Run IceHost login script
         id: run
         continue-on-error: true
