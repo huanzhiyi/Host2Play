@@ -42,13 +42,10 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb wget gnupg unzip
+          sudo apt-get install -y -qq xvfb wget unzip
 
-      - name: Install Chrome
-        run: |
-          wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt install -y -qq ./google-chrome-stable_current_amd64.deb
-          google-chrome --version
+      - name: Check Chrome
+        run: google-chrome --version
 
       - name: Install Python dependencies
         run: |
@@ -271,7 +268,6 @@ jobs:
         id: run
         continue-on-error: true
         env:
-          CI: true
           ICEHOST_LOGIN_URL: ${{ inputs.login_url || secrets.ICEHOST_LOGIN_URL }}
           ICEHOST_USERNAME: ${{ secrets.ICEHOST_USERNAME }}
           ICEHOST_PASSWORD: ${{ secrets.ICEHOST_PASSWORD }}
