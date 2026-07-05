@@ -90,7 +90,7 @@ jobs:
           echo "[INFO] WARP Trace:"
           curl -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E 'ip=|warp=|loc=' || true
 
-      - name: 安装并启动代理 (备用, 当 PROXY_NODE 有值且 ENABLE_WARP=false)
+      - name: 安装并启动代理
         id: proxy
         env:
           PROXY_NODE: ${{ secrets.PROXY_NODE }}
