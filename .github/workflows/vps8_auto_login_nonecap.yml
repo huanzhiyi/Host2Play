@@ -1,4 +1,4 @@
-name: VPS8 Auto Login (NoneCap)
+name: VPS8 Auto Login
 
 on:
   schedule:
