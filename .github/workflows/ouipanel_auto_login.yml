@@ -65,14 +65,14 @@ jobs:
           echo "chromedriver ready"
 
       - name: 启用 WARP 网络
-        if: ${{ secrets.ENABLE_WARP != 'false' }}
+        if: secrets.ENABLE_WARP != 'false'
         uses: fscarmen/warp-on-actions@v1.3
         with:
           stack: dual
           mode: client
 
       - name: 修复 DNS
-        if: ${{ secrets.ENABLE_WARP != 'false' }}
+        if: secrets.ENABLE_WARP != 'false'
         run: |
           echo "[INFO] 停用 systemd-resolved，设置公共 DNS..."
           sudo systemctl stop systemd-resolved 2>/dev/null || true
@@ -93,7 +93,7 @@ jobs:
           curl -s --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -E 'ip=|warp=|loc=' || true
 
       - name: 安装并启动代理 (备用, 仅当 ENABLE_WARP=false)
-        if: ${{ secrets.ENABLE_WARP == 'false' }}
+        if: secrets.ENABLE_WARP == 'false'
         id: proxy
         env:
           PROXY_NODE: ${{ secrets.PROXY_NODE }}
@@ -289,7 +289,7 @@ jobs:
           CI: true
           OUIPANEL_EMAIL: ${{ secrets.OUIPANEL_EMAIL }}
           OUIPANEL_PASSWORD: ${{ secrets.OUIPANEL_PASSWORD }}
-          PROXY_NODE: ${{ steps.proxy.outputs.proxy_server }}
+          PROXY_NODE: ${{ steps.proxy.outputs.proxy_server || '' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
