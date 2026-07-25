@@ -1,4 +1,4 @@
-name: Auto Renew therose
+name: TheroseAuto Renew
 
 on:
   workflow_dispatch:
