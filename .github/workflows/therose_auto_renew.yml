@@ -1,0 +1,86 @@
+name: Auto Renew therose
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '40 8,20 * * *'
+
+jobs:
+  Renew-therose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      actions: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: huanzhiyi/some-atuo-renew
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          lfs: false
+
+      - name: ⚙ 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-therose-${{ runner.os }}-py311-v1
+          restore-keys: |
+            pip-therose-${{ runner.os }}-
+
+      - name: 🛠️ 安装系统依赖和 Python 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          python -m pip install --upgrade pip
+          pip install "seleniumbase>=4.18.0" requests
+          seleniumbase install chromedriver
+
+      - name: ⚙ 设置代理 (sing-box)
+        env:
+          NODE_LINK: ${{ secrets.PROXY_NODE }}
+        run: |
+          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+
+      - name: Verify dependencies
+        run: |
+          python -c "
+          import importlib.metadata
+          print('seleniumbase:', importlib.metadata.version('seleniumbase'))
+          "
+
+      - name: 🚀 运行续期脚本
+        env:
+          CI: true
+          THEROSE_EMAIL: ${{ secrets.THEROSE_EMAIL }}
+          THEROSE_PASSWORD: ${{ secrets.THEROSE_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          IS_PROXY: ${{ env.IS_PROXY }}
+          PROXY_SERVER: ${{ env.PROXY_SERVER }}
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python3 therose_auto_renew.py
+
+      - name: 🧽 清理进程和临时文件
+        if: always()
+        run: |
+          pkill -f sing-box || true
+          pkill -f chromedriver || true
+          pkill -f chrome || true
+          pkill -f Xvfb || true
+          rm -f sing-box sing-box-config.json sing-box.log
+
+      - name: 清理工作流记录
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
