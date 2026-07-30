@@ -34,10 +34,8 @@ jobs:
           restore-keys: |
             pip-therose-${{ runner.os }}-
 
-      - name: 🛠️ 安装系统依赖和 Python 依赖
+      - name: 🛠️ 安装 Python 依赖
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb
           python -m pip install --upgrade pip
           pip install "seleniumbase>=4.18.0" requests
           seleniumbase install chromedriver
@@ -64,7 +62,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           IS_PROXY: ${{ env.IS_PROXY }}
           PROXY_SERVER: ${{ env.PROXY_SERVER }}
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python3 therose_auto_renew.py
+        run: python3 therose_auto_renew.py
 
       - name: 🧽 清理进程和临时文件
         if: always()
@@ -72,7 +70,6 @@ jobs:
           pkill -f sing-box || true
           pkill -f chromedriver || true
           pkill -f chrome || true
-          pkill -f Xvfb || true
           rm -f sing-box sing-box-config.json sing-box.log
 
       - name: 清理工作流记录
