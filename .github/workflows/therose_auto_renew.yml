@@ -34,8 +34,10 @@ jobs:
           restore-keys: |
             pip-therose-${{ runner.os }}-
 
-      - name: 🛠️ 安装 Python 依赖
+      - name: 🛠️ 安装系统依赖和 Python 依赖
         run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
           python -m pip install --upgrade pip
           pip install "seleniumbase>=4.18.0" requests
           seleniumbase install chromedriver
@@ -45,7 +47,7 @@ jobs:
           NODE_LINK: ${{ secrets.PROXY_NODE }}
         run: |
           sudo apt-get install -y jq 2>/dev/null || true
-          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh) || echo "代理设置失败，将使用直连模式"
+          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
       - name: Verify dependencies
         run: |
@@ -61,7 +63,7 @@ jobs:
           THEROSE_PASSWORD: ${{ secrets.THEROSE_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python3 therose_auto_renew.py
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python3 therose_auto_renew.py
 
       - name: 🧽 清理进程和临时文件
         if: always()
@@ -69,6 +71,7 @@ jobs:
           pkill -f sing-box || true
           pkill -f chromedriver || true
           pkill -f chrome || true
+          pkill -f Xvfb || true
           rm -f sing-box sing-box-config.json sing-box.log
 
       - name: 清理工作流记录
