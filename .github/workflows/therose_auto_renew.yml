@@ -44,7 +44,8 @@ jobs:
         env:
           NODE_LINK: ${{ secrets.PROXY_NODE }}
         run: |
-          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+          sudo apt-get install -y jq 2>/dev/null || true
+          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh) || echo "代理设置失败，将使用直连模式"
 
       - name: Verify dependencies
         run: |
