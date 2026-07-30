@@ -61,8 +61,6 @@ jobs:
           THEROSE_PASSWORD: ${{ secrets.THEROSE_PASSWORD }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          IS_PROXY: ${{ env.IS_PROXY }}
-          PROXY_SERVER: ${{ env.PROXY_SERVER }}
         run: python3 therose_auto_renew.py
 
       - name: 🧽 清理进程和临时文件
