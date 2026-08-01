@@ -29,13 +29,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk jq wget
-          pip install seleniumbase requests
+          pip install seleniumbase requests pysocks
           seleniumbase install chromedriver
 
       - name: ⚙ 设置代理 (sing-box)
         env:
-          PROXY_NODE: ${{ secrets.PROXY_NODE }}
+          NODE_LINK: ${{ secrets.PROXY_NODE }}
         run: |
+          sudo apt-get install -y jq 2>/dev/null || true
           bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
       - name: 🚀 运行续期脚本
