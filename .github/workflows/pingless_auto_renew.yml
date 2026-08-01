@@ -2,7 +2,7 @@ name: Pingless Auto Renew
 
 on:
   schedule:
-    - cron: '0 2 * * *' # 每天UTC 2点 (北京时间10点, 一般都会推迟),自行根据服务到期时间调整
+    - cron: '46 9 * * *' # 每天UTC 9点46 (北京时间10点, 一般都会推迟),自行根据服务到期时间调整
   workflow_dispatch:
 
 jobs:
